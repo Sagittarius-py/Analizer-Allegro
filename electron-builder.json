@@ -1,0 +1,34 @@
+{
+  "appId": "com.allegro.profit-analyzer",
+  "productName": "Allegro Profit Analyzer",
+  "directories": {
+    "output": "dist",
+    "buildResources": "assets"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "win": {
+    "target": [
+      "nsis",
+      "portable"
+    ],
+    "certificateFile": null,
+    "certificatePassword": null,
+    "signingHashAlgorithms": [
+      "sha256"
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "Allegro Profit Analyzer"
+  },
+  "portable": {
+    "artifactName": "${productName}-${version}.exe"
+  }
+}

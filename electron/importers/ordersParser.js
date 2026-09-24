@@ -1,0 +1,68 @@
+// Simple section-aware CSV parser for File Type A (orders with sections)
+const splitCsvLine = (line, delimiter = ',') => {
+  const res = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; } else { inQuotes = !inQuotes; }
+      continue;
+    }
+    if (ch === delimiter && !inQuotes) { res.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  res.push(cur);
+  return res;
+};
+
+function parseOrdersCsv(text) {
+  const lines = text.split(/\r?\n/);
+  let currentHeaders = null;
+  let currentSection = null;
+  const orders = [];
+  const lineItems = [];
+
+  for (let raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('Type,')) {
+      // new header
+      currentHeaders = splitCsvLine(line, ',');
+      currentSection = null;
+      continue;
+    }
+    if (!currentHeaders) continue; // skip until header seen
+    const values = splitCsvLine(line, ',');
+    const obj = {};
+    for (let i = 0; i < currentHeaders.length; i++) {
+      const key = currentHeaders[i];
+      obj[key] = values[i] === undefined ? '' : values[i];
+    }
+    const type = obj['Type'] || '';
+    if (type === 'order') {
+      orders.push({
+        type: 'order',
+        orderId: obj['OrderId'] || null,
+        orderDate: obj['OrderDate'] || null,
+        sellerStatus: obj['SellerStatus'] || null,
+        marketplace: obj['Marketplace'] || null,
+        paymentAmount: obj['PaymentAmount'] ? parseFloat(obj['PaymentAmount']) : null,
+        paymentCurrency: obj['PaymentCurrency'] || null,
+        fulfillmentProvider: obj['FulfillmentProvider'] || null,
+        raw: obj
+      });
+    } else if (type === 'lineItem') {
+      lineItems.push({
+        type: 'lineItem',
+        lineItemId: obj['LineItemId'] || null,
+        returnsQuantity: obj['ReturnsQuantity'] ? parseInt(obj['ReturnsQuantity'], 10) : 0,
+        raw: obj
+      });
+    }
+  }
+
+  return { orders, lineItems };
+}
+
+module.exports = { parseOrdersCsv };
