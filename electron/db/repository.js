@@ -69,6 +69,116 @@ function insertImportRecord({ fileName, fileType, rowCount, dateFrom = null, dat
   return id;
 }
 
+function listProducts() {
+  const db = openDb();
+  const products = db.prepare(`
+    SELECT offer_id, offer_name, sku, unit_cost, sale_price_net, purchase_vat_rate, sales_vat_rate,
+      vat_deductible_percent, is_auto_discovered, vat_verified, currency, notes, updated_at
+    FROM product_cost
+    ORDER BY offer_name COLLATE NOCASE, offer_id
+  `).all();
+  db.close();
+  return products.map((product) => {
+    const netCost = product.unit_cost == null ? null : Number(product.unit_cost);
+    const purchaseVat = netCost == null ? null : netCost * Number(product.purchase_vat_rate || 0) / 100;
+    const deductiblePercent = Number(product.vat_deductible_percent ?? 100);
+    return {
+      ...product,
+      unit_cost: netCost,
+      purchaseVat: purchaseVat == null ? null : Math.round(purchaseVat * 100) / 100,
+      nonDeductibleVat: purchaseVat == null ? null : Math.round(purchaseVat * (100 - deductiblePercent) * 100) / 10000,
+      grossPurchaseCost: netCost == null || !product.vat_verified ? null : Math.round((netCost + purchaseVat * (100 - deductiblePercent) / 100) * 100) / 100,
+      estimatedGrossPrice: !product.vat_verified || product.sale_price_net == null
+        ? null
+        : Math.round(Number(product.sale_price_net) * (1 + Number(product.sales_vat_rate || 0) / 100) * 100) / 100
+    };
+  });
+}
+
+function ensureProductsFromBillingOperations(operations = []) {
+  const offers = new Map();
+  for (const operation of operations) {
+    const offerId = String(operation.offer_id || '').trim();
+    const offerName = String(operation.offer_name || '').trim();
+    if (offerId && offerName && !offers.has(offerId)) offers.set(offerId, offerName);
+  }
+  if (!offers.size) return 0;
+
+  const db = openDb();
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO product_cost
+      (offer_id, offer_name, unit_cost, currency, is_auto_discovered, vat_verified, updated_at)
+    VALUES (?, ?, NULL, 'PLN', 1, 0, ?)
+  `);
+  const fillName = db.prepare(`
+    UPDATE product_cost SET offer_name = ?
+    WHERE offer_id = ? AND (offer_name IS NULL OR TRIM(offer_name) = '')
+  `);
+  const now = new Date().toISOString();
+  const discoverOffers = db.transaction(() => {
+    let discovered = 0;
+    for (const [offerId, offerName] of offers) {
+      if (insert.run(offerId, offerName, now).changes) discovered += 1;
+      else fillName.run(offerName, offerId);
+    }
+    return discovered;
+  });
+  const discovered = discoverOffers();
+  db.close();
+  return discovered;
+}
+
+function saveProduct(product) {
+  const offerId = String(product.offerId || '').trim();
+  const offerName = String(product.offerName || '').trim();
+  const sku = String(product.sku || '').trim() || null;
+  const netCost = Number(product.netPurchaseCost);
+  const salePriceNet = product.netSalePrice === '' || product.netSalePrice == null ? null : Number(product.netSalePrice);
+  const purchaseVatRate = Number(product.purchaseVatRate);
+  const salesVatRate = Number(product.salesVatRate);
+  const deductiblePercent = Number(product.vatDeductiblePercent);
+  const currency = String(product.currency || 'PLN').trim().toUpperCase();
+  const notes = String(product.notes || '').trim() || null;
+  const vatVerified = product.vatVerified === true ? 1 : 0;
+
+  if (!offerId) throw new Error('Podaj identyfikator oferty.');
+  if (!offerName) throw new Error('Podaj nazwę produktu.');
+  if (!Number.isFinite(netCost) || netCost < 0) throw new Error('Koszt zakupu netto musi być liczbą nieujemną.');
+  if (salePriceNet != null && (!Number.isFinite(salePriceNet) || salePriceNet < 0)) throw new Error('Cena sprzedaży netto musi być liczbą nieujemną.');
+  if (!Number.isFinite(purchaseVatRate) || purchaseVatRate < 0 || purchaseVatRate > 100) throw new Error('Stawka VAT zakupu musi mieścić się w zakresie 0–100%.');
+  if (!Number.isFinite(salesVatRate) || salesVatRate < 0 || salesVatRate > 100) throw new Error('Stawka VAT sprzedaży musi mieścić się w zakresie 0–100%.');
+  if (!Number.isFinite(deductiblePercent) || deductiblePercent < 0 || deductiblePercent > 100) throw new Error('Odliczenie VAT musi mieścić się w zakresie 0–100%.');
+  if (!/^[A-Z]{3}$/.test(currency)) throw new Error('Waluta musi być trzyznakowym kodem, np. PLN.');
+
+  const db = openDb();
+  db.prepare(`
+    INSERT INTO product_cost
+      (offer_id, offer_name, sku, unit_cost, sale_price_net, purchase_vat_rate, sales_vat_rate, vat_deductible_percent, vat_verified, currency, notes, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(offer_id) DO UPDATE SET
+      offer_name = excluded.offer_name,
+      sku = excluded.sku,
+      unit_cost = excluded.unit_cost,
+      sale_price_net = excluded.sale_price_net,
+      purchase_vat_rate = excluded.purchase_vat_rate,
+      sales_vat_rate = excluded.sales_vat_rate,
+      vat_deductible_percent = excluded.vat_deductible_percent,
+      vat_verified = excluded.vat_verified,
+      currency = excluded.currency,
+      notes = excluded.notes,
+      updated_at = excluded.updated_at
+  `).run(offerId, offerName, sku, netCost, salePriceNet, purchaseVatRate, salesVatRate, deductiblePercent, vatVerified, currency, notes, new Date().toISOString());
+  db.close();
+  return { ok: true, offerId };
+}
+
+function deleteProduct(offerId) {
+  const db = openDb();
+  const result = db.prepare('DELETE FROM product_cost WHERE offer_id = ?').run(String(offerId || '').trim());
+  db.close();
+  return result.changes;
+}
+
 function insertOrders(importId, orders, lineItems = []) {
   if ((!orders || !orders.length) && (!lineItems || !lineItems.length)) return 0;
   const db = openDb();
@@ -184,7 +294,7 @@ function getMetricsSummary(opts = {}) {
   };
 }
 
-module.exports = { openDb, getDatabaseInfo, listImports, computeHash, findImportByHash, insertImportRecord, insertOrders, insertBillingOperations, linkBillingOperationsToOrders, getMetricsSummary };
+module.exports = { openDb, getDatabaseInfo, listImports, computeHash, findImportByHash, insertImportRecord, insertOrders, insertBillingOperations, linkBillingOperationsToOrders, getMetricsSummary, listProducts, saveProduct, deleteProduct, ensureProductsFromBillingOperations };
 
 // Settings helpers
 function getSetting(key) {
@@ -275,10 +385,20 @@ function getProductBreakdown() {
   const db = openDb();
   const rows = db.prepare(`
     SELECT b.offer_id as product_id, MAX(b.offer_name) as product_name,
+      pc.sku as sku,
+      pc.unit_cost as unit_cost_net,
+      pc.sale_price_net as sale_price_net,
+      pc.purchase_vat_rate as purchase_vat_rate,
+      pc.sales_vat_rate as sales_vat_rate,
+      pc.vat_deductible_percent as vat_deductible_percent,
+      pc.vat_verified as vat_verified,
+      pc.is_auto_discovered as is_auto_discovered,
+      pc.currency as product_currency,
       SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END) as gross_cost,
       SUM(CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) as cost_credits,
       COUNT(*) as operation_count
     FROM billing_operations b
+    LEFT JOIN product_cost pc ON pc.offer_id = b.offer_id
     LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
     WHERE b.offer_id IS NOT NULL
       AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
@@ -290,6 +410,16 @@ function getProductBreakdown() {
   return rows.map(r => ({
     productId: r.product_id,
     productName: r.product_name || 'Nieznana oferta',
+    sku: r.sku,
+    productCurrency: r.product_currency || 'PLN',
+    purchaseUnitNet: r.unit_cost_net == null ? null : Math.round(r.unit_cost_net * 100) / 100,
+    purchaseVatRate: r.purchase_vat_rate == null ? null : r.purchase_vat_rate,
+    salesVatRate: r.sales_vat_rate == null ? null : r.sales_vat_rate,
+    vatDeductiblePercent: r.vat_deductible_percent == null ? null : r.vat_deductible_percent,
+    vatVerified: Boolean(r.vat_verified),
+    isAutoDiscovered: Boolean(r.is_auto_discovered),
+    effectivePurchaseUnitCost: r.unit_cost_net == null || !r.vat_verified ? null : Math.round(r.unit_cost_net * (1 + (r.purchase_vat_rate || 0) / 100 * (1 - (r.vat_deductible_percent ?? 100) / 100)) * 100) / 100,
+    saleUnitGross: r.sale_price_net == null || !r.vat_verified ? null : Math.round(r.sale_price_net * (1 + (r.sales_vat_rate || 0) / 100) * 100) / 100,
     totalCosts: Math.round(((r.gross_cost || 0) - (r.cost_credits || 0)) * 100) / 100,
     grossCosts: Math.round((r.gross_cost || 0) * 100) / 100,
     credits: Math.round((r.cost_credits || 0) * 100) / 100,

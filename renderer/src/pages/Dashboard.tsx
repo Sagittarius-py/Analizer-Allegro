@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import MetricCard from '../components/MetricCard'
 import MiniChart from '../components/MiniChart'
 import { CostCategoryChart, OrderStatusDonut, TrendAnalysisChart } from '../components/AnalysisCharts'
+import { formatLocalDate, translateReportType } from '../utils/localization'
 
 export default function Dashboard({ onNavigate }: { onNavigate: (page: string) => void }) {
   const [metrics, setMetrics] = useState<any>(null)
@@ -95,10 +96,10 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         </section>
 
         <section className="panel p-4 sm:p-5">
-          <div className="eyebrow">BILLING</div>
+          <div className="eyebrow">ROZLICZENIA</div>
           <h3 className="font-semibold">Największe kategorie kosztów</h3>
           <CostCategoryChart data={costs} />
-          {sourceSummary?.billing?.dateFrom ? <p className="mt-4 text-xs text-gray-500">Okres billing: {sourceSummary.billing.dateFrom} – {sourceSummary.billing.dateTo}</p> : null}
+          {sourceSummary?.billing?.dateFrom ? <p className="mt-4 text-xs text-gray-500">Okres rozliczeń: {sourceSummary.billing.dateFrom} – {sourceSummary.billing.dateTo}</p> : null}
         </section>
       </div>
 
@@ -106,12 +107,12 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         <div className="panel p-4">
           <div className="flex items-center justify-between"><h3 className="font-semibold">Najnowsze importy</h3></div>
           <ul className="mt-3 space-y-2">
-            {recent.length === 0 && <li className="text-sm text-gray-500">Brak importów</li>}
+            {recent.length === 0 && <li className="text-sm text-gray-500">Nie zaimportowano jeszcze żadnych raportów.</li>}
             {recent.map((r: any) => (
               <li key={r.id} className="p-2 border rounded flex justify-between items-center">
                 <div>
                   <div className="font-medium">{r.file_name}</div>
-                  <div className="text-xs text-gray-500">{r.file_type} • {r.row_count} wierszy • {new Date(r.imported_at).toLocaleString()}</div>
+                  <div className="text-xs text-gray-500">{translateReportType(r.file_type)} • {r.row_count} wierszy • {formatLocalDate(r.imported_at)}</div>
                 </div>
                 <div className="text-sm text-gray-600">{r.date_range_from || '-'} → {r.date_range_to || '-'}</div>
               </li>

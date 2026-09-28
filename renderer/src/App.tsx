@@ -6,11 +6,13 @@ import SettingsPage from './pages/Settings'
 import OrdersPage from './pages/Orders'
 import CostsPage from './pages/Costs'
 import ReportsPage from './pages/Reports'
+import ProductsPage from './pages/Products'
 
 const pageTitles: Record<string, string> = {
-  home: 'Dashboard',
+  home: 'Pulpit',
   import: 'Import danych',
   orders: 'Zamówienia',
+  products: 'Produkty i VAT',
   costs: 'Koszty i produkty',
   reports: 'Raporty',
   settings: 'Ustawienia'
@@ -36,7 +38,7 @@ export default function App() {
 
       <div className="app-main flex-1 flex flex-col">
         <header className="app-header flex items-center justify-between bg-white border-b">
-          <div className="flex items-center gap-3">
+          <div className="header-title-wrap">
             <button
               className="mobile-menu-button md:hidden"
               aria-label={mobileOpen ? 'Zamknij menu' : 'Otwórz menu'}
@@ -45,6 +47,7 @@ export default function App() {
             >
               <span aria-hidden="true">{mobileOpen ? '×' : '☰'}</span>
             </button>
+            <span className="header-title-mark" aria-hidden="true" />
             <h1 className="page-title">{pageTitles[page] || 'Allegro Profit Analyzer'}</h1>
           </div>
           <div className="local-status">Dane lokalne</div>
@@ -55,6 +58,7 @@ export default function App() {
             {page === 'home' && <Dashboard onNavigate={navigateTo} />}
             {page === 'import' && <ImportPage />}
             {page === 'orders' && <OrdersPage />}
+            {page === 'products' && <ProductsPage />}
             {page === 'costs' && <CostsPage />}
             {page === 'reports' && <ReportsPage />}
             {page === 'settings' && (

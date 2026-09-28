@@ -14,7 +14,10 @@ contextBridge.exposeInMainWorld('allegroAPI', {
     breakdown: () => ipcRenderer.invoke('costs:breakdown')
   },
   products: {
-    breakdown: () => ipcRenderer.invoke('products:breakdown')
+    breakdown: () => ipcRenderer.invoke('products:breakdown'),
+    list: () => ipcRenderer.invoke('products:list'),
+    save: (product) => ipcRenderer.invoke('products:save', product),
+    delete: (offerId) => ipcRenderer.invoke('products:delete', offerId)
   },
   analytics: {
     sourceSummary: () => ipcRenderer.invoke('analytics:sourceSummary')

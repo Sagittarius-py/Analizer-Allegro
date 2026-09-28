@@ -1,4 +1,5 @@
-import React from 'react'
+import React, { useState } from 'react'
+import { translateCostCategory } from '../utils/localization'
 
 type TrendPoint = {
   date: string
@@ -36,6 +37,7 @@ function formatCurrency(value: number) {
 }
 
 export function TrendAnalysisChart({ data }: TrendChartProps) {
+  const [hoveredPoint, setHoveredPoint] = useState<number | null>(null)
   if (!data.length) {
     return <div className="chart-empty">Zaimportuj raporty, aby zobaczyć trend dzienny.</div>
   }
@@ -82,16 +84,52 @@ export function TrendAnalysisChart({ data }: TrendChartProps) {
             const revenueY = chartPadding.top + plotHeight - (point.revenue / maxValue) * plotHeight
             const costY = chartPadding.top + plotHeight - (point.costs / maxValue) * plotHeight
             return (
-              <g key={`${point.date}-${index}`}>
-                <circle className="chart-point chart-point-revenue" cx={x} cy={revenueY} r="3">
-                  <title>{`${point.date}: przychód ${point.revenue.toFixed(2)} PLN`}</title>
-                </circle>
-                <circle className="chart-point chart-point-cost" cx={x} cy={costY} r="3">
-                  <title>{`${point.date}: koszty ${point.costs.toFixed(2)} PLN`}</title>
-                </circle>
+              <g
+                key={`${point.date}-${index}`}
+                onMouseEnter={() => setHoveredPoint(index)}
+                onMouseLeave={() => setHoveredPoint(null)}
+              >
+                <circle
+                  className="chart-point chart-point-revenue"
+                  cx={x}
+                  cy={revenueY}
+                  r="4"
+                  tabIndex={0}
+                  aria-label={`${point.date}: przychód ${point.revenue.toFixed(2)} PLN`}
+                  onFocus={() => setHoveredPoint(index)}
+                  onBlur={() => setHoveredPoint(null)}
+                />
+                <circle
+                  className="chart-point chart-point-cost"
+                  cx={x}
+                  cy={costY}
+                  r="4"
+                  tabIndex={0}
+                  aria-label={`${point.date}: koszty netto ${point.costs.toFixed(2)} PLN`}
+                  onFocus={() => setHoveredPoint(index)}
+                  onBlur={() => setHoveredPoint(null)}
+                />
               </g>
             )
           })}
+          {hoveredPoint != null && data[hoveredPoint] ? (() => {
+            const point = data[hoveredPoint]
+            const x = chartPadding.left + (hoveredPoint / Math.max(data.length - 1, 1)) * plotWidth
+            const revenueY = chartPadding.top + plotHeight - (point.revenue / maxValue) * plotHeight
+            const costsY = chartPadding.top + plotHeight - (point.costs / maxValue) * plotHeight
+            const tooltipX = Math.max(chartPadding.left, Math.min(chartWidth - chartPadding.right - 174, x - 87))
+            const tooltipY = Math.max(chartPadding.top, Math.min(revenueY, costsY) - 68)
+            return (
+              <g className="chart-tooltip" pointerEvents="none">
+                <rect x={tooltipX} y={tooltipY} width="174" height="58" rx="6" />
+                <text className="chart-tooltip-date" x={tooltipX + 10} y={tooltipY + 15}>{point.date}</text>
+                <circle className="chart-tooltip-revenue-dot" cx={tooltipX + 13} cy={tooltipY + 30} r="3" />
+                <text className="chart-tooltip-value" x={tooltipX + 22} y={tooltipY + 33}>Przychód {point.revenue.toFixed(2)} PLN</text>
+                <circle className="chart-tooltip-cost-dot" cx={tooltipX + 13} cy={tooltipY + 46} r="3" />
+                <text className="chart-tooltip-value" x={tooltipX + 22} y={tooltipY + 49}>Koszty {point.costs.toFixed(2)} PLN</text>
+              </g>
+            )
+          })() : null}
           {labelIndexes.map((index) => {
             const x = chartPadding.left + (index / Math.max(data.length - 1, 1)) * plotWidth
             return <text key={data[index].date} className="chart-axis-label" x={x} y={chartHeight - 10} textAnchor={index === 0 ? 'start' : index === data.length - 1 ? 'end' : 'middle'}>{data[index].date.slice(5)}</text>
@@ -122,8 +160,12 @@ export function OrderStatusDonut({ active, cancelled }: OrderStatusDonutProps) {
       <div className="status-donut-wrap">
         <svg className="status-donut" viewBox="0 0 140 140" role="img" aria-label={`${active} aktywnych i ${cancelled} anulowanych zamówień`}>
           <circle className="donut-track" cx="70" cy="70" r={radius} />
-          <circle className="donut-active" cx="70" cy="70" r={radius} strokeDasharray={`${activeLength} ${circumference}`} />
-          <circle className="donut-cancelled" cx="70" cy="70" r={radius} strokeDasharray={`${cancelledLength} ${circumference}`} strokeDashoffset={-activeLength} />
+          <circle className="donut-active" cx="70" cy="70" r={radius} strokeDasharray={`${activeLength} ${circumference}`}>
+            <title>{`Aktywne: ${active} (${Math.round((active / total) * 100)}%)`}</title>
+          </circle>
+          <circle className="donut-cancelled" cx="70" cy="70" r={radius} strokeDasharray={`${cancelledLength} ${circumference}`} strokeDashoffset={-activeLength}>
+            <title>{`Anulowane: ${cancelled} (${cancelledPercent}%)`}</title>
+          </circle>
           <text className="donut-total" x="70" y="68" textAnchor="middle">{total}</text>
           <text className="donut-caption" x="70" y="87" textAnchor="middle">zamówień</text>
         </svg>
@@ -159,11 +201,11 @@ export function CostCategoryChart({ data }: CostCategoryChartProps) {
       {categories.map((category) => (
         <div className="cost-category-row" key={category.category}>
           <div className="cost-category-heading">
-            <span>{category.category || 'Pozostałe'}</span>
+            <span>{translateCostCategory(category.category)}</span>
             <strong>{category.cost.toFixed(2)} PLN</strong>
           </div>
-          <div className="cost-category-track" role="img" aria-label={`${category.category}: ${category.cost.toFixed(2)} zł`}>
-            <div className="cost-category-fill" style={{ width: `${Math.max(4, (category.cost / largestCost) * 100)}%` }} />
+          <div className="cost-category-track" role="img" aria-label={`${translateCostCategory(category.category)}: ${category.cost.toFixed(2)} zł`}>
+            <div className="cost-category-fill" style={{ width: `${Math.max(4, (category.cost / largestCost) * 100)}%` }} title={`${translateCostCategory(category.category)}: ${category.cost.toFixed(2)} PLN, ${category.count} operacji`} />
           </div>
           <div className="cost-category-count">{category.count} operacji</div>
         </div>

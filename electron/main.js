@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, Menu } = require('electron');
 const { initDatabase } = require('./db/init');
 const { registerIpcHandlers } = require('./ipc');
 const path = require('path');
@@ -7,12 +7,14 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1200,
     height: 800,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
   });
+  win.setMenuBarVisibility(false);
 
   const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production';
   if (isDev) {
@@ -26,6 +28,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   createWindow();
 
   // initialize database in packaged app or when explicitly enabled

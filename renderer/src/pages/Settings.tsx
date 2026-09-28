@@ -102,9 +102,12 @@ export default function SettingsPage() {
       } else if (res && res.canceled) {
         // user canceled
       } else {
-        alert('Błąd: ' + (res && res.error))
+        alert('Nie udało się wyeksportować kopii bazy danych.')
       }
-    } catch (err) { alert('Błąd: ' + String(err)) }
+    } catch (err) {
+      console.error('Database export failed', err)
+      alert('Nie udało się wyeksportować kopii bazy danych.')
+    }
   }
 
   return (
@@ -153,7 +156,7 @@ export default function SettingsPage() {
           {dbInfo ? (
             <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
               <div className="preview-stat"><span>Zamówienia</span><strong>{dbInfo.orders ?? 0}</strong></div>
-              <div className="preview-stat"><span>Operacje billing</span><strong>{dbInfo.billing_operations ?? 0}</strong></div>
+              <div className="preview-stat"><span>Operacje rozliczeniowe</span><strong>{dbInfo.billing_operations ?? 0}</strong></div>
               <div className="preview-stat"><span>Rozmiar bazy</span><strong>{dbInfo.size ? `${(dbInfo.size / 1024).toFixed(1)} KB` : '—'}</strong></div>
               <div className="preview-stat col-span-full"><span>Lokalizacja</span><strong className="break-all">{dbInfo.path}</strong></div>
             </div>

@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { formatLocalDate } from '../utils/localization'
 
 export default function ReportsPage() {
   const [reports, setReports] = useState<any[]>([])
@@ -61,7 +62,7 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-4 p-4">
-      <div><div className="eyebrow">ZAPISANE MIGAWKI</div><h2 className="section-title">Raporty</h2></div>
+      <div><div className="eyebrow">ZAPISANE PODSUMOWANIA</div><h2 className="section-title">Raporty</h2></div>
 
       <div className="panel p-4 sm:p-5">
         <h3 className="font-medium mb-3">Zapisz nowy raport</h3>
@@ -107,7 +108,7 @@ export default function ReportsPage() {
                   {r.is_pinned ? '📌 ' : ''}{r.name}
                 </div>
                 <div className="text-xs text-gray-600">
-                  {r.date_from} → {r.date_to} | {new Date(r.created_at).toLocaleString()}
+                  {r.date_from} → {r.date_to} | {formatLocalDate(r.created_at)}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">

@@ -31,6 +31,7 @@ type ImportResult = {
   insertedOrders?: number
   insertedLineItems?: number
   insertedOperations?: number
+  discoveredProducts?: number
 }
 
 type ReportState<T> = Record<ReportType, T[]>
@@ -85,7 +86,7 @@ export default function ImportPage() {
     try {
       const res = await (window as any).allegroImport.selectFiles(lastDir || undefined)
       if (!Array.isArray(res)) {
-        setError(res && res.error ? res.error : 'Nie udało się odczytać listy plików.')
+        setError('Nie udało się odczytać wybranych plików.')
         return
       }
       setCurrentFiles(res)
@@ -102,6 +103,7 @@ export default function ImportPage() {
       }
     } catch (err) {
       console.error('selectFiles error', err)
+      setError('Nie udało się otworzyć okna wyboru plików.')
     }
   }
 
@@ -155,7 +157,8 @@ export default function ImportPage() {
       if (detectedPreviews.billing.length && !detectedPreviews.orders.length) setActiveType('billing')
       if (detectedPreviews.orders.length && !detectedPreviews.billing.length) setActiveType('orders')
     } catch (err) {
-      setError(`Błąd podglądu: ${String(err)}`)
+      console.error('Preview error', err)
+      setError('Nie udało się przygotować podglądu raportu.')
     } finally {
       setLoading(false)
     }
@@ -189,7 +192,8 @@ export default function ImportPage() {
       if (resultsByType.billing.length && !resultsByType.orders.length) setActiveType('billing')
       if (resultsByType.orders.length && !resultsByType.billing.length) setActiveType('orders')
     } catch (err) {
-      setError(`Błąd importu: ${String(err)}`)
+      console.error('Import error', err)
+      setError('Import nie powiódł się. Sprawdź plik i spróbuj ponownie.')
     } finally {
       setLoading(false)
     }
@@ -274,7 +278,7 @@ export default function ImportPage() {
                 <div className="file-mark" aria-hidden="true">CSV</div>
                 <div className="min-w-0">
                   <div className="truncate font-medium text-gray-800">{f.name}</div>
-                  {f.error ? <div className="mt-1 text-sm text-red-400">Błąd odczytu: {f.error}</div> : null}
+                  {f.error ? <div className="mt-1 text-sm text-red-400">Nie udało się odczytać tego pliku.</div> : null}
                   {f.path ? <div className="mt-1 truncate text-xs text-gray-500">{f.path}</div> : null}
                 </div>
               </div>
@@ -303,7 +307,7 @@ export default function ImportPage() {
                   </div>
                   {preview.error ? <span className="status-pill status-pill-error">Do sprawdzenia</span> : <span className="status-pill status-pill-success">Gotowy</span>}
                 </div>
-                {preview.error ? <p className="mt-3 text-sm text-red-300">{preview.message || resultErrorLabels[preview.error] || preview.error}</p> : (
+                {preview.error ? <p className="mt-3 text-sm text-red-300">{resultErrorLabels[preview.error] || 'Nie udało się odczytać tego raportu.'}</p> : (
                   <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
                     {preview.fileType === 'orders' ? <>
                       <div className="preview-stat"><span>Zamówienia</span><strong>{preview.ordersCount}</strong></div>
@@ -334,8 +338,9 @@ export default function ImportPage() {
                   <div className="mt-1 text-xs text-gray-500">
                     {result.insertedOrders != null ? `${result.insertedOrders} zamówień · ${result.insertedLineItems || 0} pozycji` : null}
                     {result.insertedOperations != null ? `${result.insertedOperations} operacji` : null}
+                    {result.discoveredProducts ? ` · wykryto ${result.discoveredProducts} nowych produktów — uzupełnij koszt zakupu i VAT w katalogu` : null}
                     {result.status === 'duplicate' ? 'Plik został już wcześniej zaimportowany.' : null}
-                    {result.error ? resultErrorLabels[result.error] || result.message || result.error : null}
+                    {result.error ? resultErrorLabels[result.error] || 'Nie udało się zaimportować tego pliku.' : null}
                   </div>
                 </div>
                 <span className={`status-pill ${result.status === 'imported' ? 'status-pill-success' : result.status === 'error' ? 'status-pill-error' : ''}`}>

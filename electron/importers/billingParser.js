@@ -69,7 +69,7 @@ function parseBillingCsv(text) {
   const idx = (name) => headers.indexOf(name);
   const requiredHeaders = ['Data', 'Typ operacji', 'Uznania', 'Obciążenia', 'Saldo'];
   if (requiredHeaders.some(name => idx(name) < 0)) {
-    throw new Error('Invalid billing CSV header');
+    throw new Error('Nieprawidłowy nagłówek raportu rozliczeń.');
   }
   const operations = [];
   for (let i = 1; i < lines.length; i++) {

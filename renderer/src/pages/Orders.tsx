@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { formatLocalDate, translateOrderStatus } from '../utils/localization'
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<any[]>([])
@@ -54,9 +55,9 @@ export default function OrdersPage() {
             {orders.map(o => (
               <tr key={o.order_id} className="border-t">
                 <td className="p-2 text-sm">{o.order_id}</td>
-                <td className="p-2 text-sm">{new Date(o.order_date).toLocaleString()}</td>
+                <td className="p-2 text-sm">{formatLocalDate(o.order_date)}</td>
                 <td className="p-2 text-sm">{o.payment_amount == null ? '—' : `${Number(o.payment_amount).toFixed(2)} ${o.payment_currency || 'PLN'}`}</td>
-                <td className="p-2 text-sm"><span className={`status-pill ${o.seller_status === 'CANCELLED' ? 'status-pill-error' : ''}`}>{o.seller_status || 'Nieznany'}</span></td>
+                <td className="p-2 text-sm"><span className={`status-pill ${o.seller_status === 'CANCELLED' ? 'status-pill-error' : ''}`}>{translateOrderStatus(o.seller_status)}</span></td>
                 <td className="p-2 text-sm"><button onClick={() => openDetails(o.order_id)} className="secondary-action px-3 py-1">Szczegóły</button></td>
               </tr>
             ))}
@@ -77,11 +78,11 @@ export default function OrdersPage() {
         <div className="panel mt-4 p-4">
           <h3 className="font-semibold">Szczegóły zamówienia {selected.order && selected.order.order_id}</h3>
           <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3 text-sm">
-            <div className="preview-stat"><span>Status</span><strong>{selected.order?.seller_status || '—'}</strong></div>
+            <div className="preview-stat"><span>Status</span><strong>{translateOrderStatus(selected.order?.seller_status)}</strong></div>
             <div className="preview-stat"><span>Kwota</span><strong>{selected.order?.payment_amount == null ? '—' : `${Number(selected.order.payment_amount).toFixed(2)} ${selected.order.payment_currency || 'PLN'}`}</strong></div>
-            <div className="preview-stat"><span>Operacje billing</span><strong>{selected.billingOperations?.length || 0}</strong></div>
+            <div className="preview-stat"><span>Operacje rozliczeniowe</span><strong>{selected.billingOperations?.length || 0}</strong></div>
           </div>
-          {selected.billingOperations?.length ? <ul className="mt-3 divide-y divide-gray-700">{selected.billingOperations.map((operation: any) => <li key={operation.id} className="flex flex-wrap justify-between gap-2 py-2 text-sm"><span>{operation.operation_type}</span><span>{Number(operation.credit || 0) - Number(operation.debit || 0)} PLN</span></li>)}</ul> : <p className="mt-3 text-sm text-gray-500">Brak powiązanych operacji billing.</p>}
+          {selected.billingOperations?.length ? <ul className="mt-3 divide-y divide-gray-700">{selected.billingOperations.map((operation: any) => <li key={operation.id} className="flex flex-wrap justify-between gap-2 py-2 text-sm"><span>{operation.operation_type}</span><span>{Number(operation.credit || 0) - Number(operation.debit || 0)} PLN</span></li>)}</ul> : <p className="mt-3 text-sm text-gray-500">Brak powiązanych operacji rozliczeniowych.</p>}
           <div className="mt-3"><button onClick={() => setSelected(null)} className="secondary-action px-3 py-1">Zamknij</button></div>
         </div>
       ) : null}

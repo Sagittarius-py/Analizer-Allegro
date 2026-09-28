@@ -25,6 +25,7 @@ const repoStub = {
   deleteSetting: () => 0,
   listOrders: () => [],
   getOrderDetails: () => null,
+  ensureProductsFromBillingOperations: () => 0,
   computeHash: (content) => require('crypto').createHash('sha256').update(content).digest('hex'),
   findImportByHash: () => null,
   insertImportRecord: () => 0,
@@ -33,6 +34,9 @@ const repoStub = {
   insertBillingOperations: () => 0,
   getCostsBreakdown: () => ({ error: 'DB disabled in dev mode' }),
   getProductBreakdown: () => [],
+  listProducts: () => [],
+  saveProduct: () => ({ error: 'Baza danych jest niedostępna.' }),
+  deleteProduct: () => 0,
   getTrendsData: () => [],
   getSourceAnalysis: () => ({
     orders: { total: 0, dateFrom: null, dateTo: null, active: 0, cancelled: 0, cancelledValue: 0, activeRevenue: 0, lineItems: 0, returnedLineItems: 0, returnedUnits: 0 },
@@ -251,10 +255,14 @@ function registerIpcHandlers() {
           continue;
         }
 
+        const discoveredProducts = fileType === 'billing'
+          ? useRepo.ensureProductsFromBillingOperations(parsed.operations)
+          : 0;
+
         const fileHash = useRepo.computeHash(content);
         const existing = useRepo.findImportByHash(fileHash);
         if (existing) {
-          results.push({ fileName: f.name, fileType, status: 'duplicate', importId: existing.id });
+          results.push({ fileName: f.name, fileType, status: 'duplicate', importId: existing.id, discoveredProducts });
           continue;
         }
 
@@ -283,7 +291,7 @@ function registerIpcHandlers() {
           });
         } else {
           const insertedOperations = useRepo.insertBillingOperations(importId, parsed.operations);
-          results.push({ fileName: f.name, status: 'imported', fileType, importId, insertedOperations });
+          results.push({ fileName: f.name, status: 'imported', fileType, importId, insertedOperations, discoveredProducts });
         }
       } catch (err) {
         results.push({ fileName: f.name, fileType, status: 'error', error: 'import_failed', message: err.message });
@@ -331,6 +339,30 @@ function registerIpcHandlers() {
   ipcMain.handle('products:breakdown', async () => {
     try {
       return useRepo.getProductBreakdown();
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('products:list', async () => {
+    try {
+      return useRepo.listProducts();
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('products:save', async (event, product) => {
+    try {
+      return useRepo.saveProduct(product);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('products:delete', async (event, offerId) => {
+    try {
+      return { deleted: useRepo.deleteProduct(offerId) };
     } catch (err) {
       return { error: err.message };
     }

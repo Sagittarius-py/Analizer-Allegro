@@ -33,6 +33,9 @@ describe('report import IPC', () => {
     const orders = parseOrdersCsv(ordersText);
 
     assert.strictEqual(billing.operations.length, 399);
+    const uniqueBillingOffers = new Map(billing.operations
+      .filter((operation) => operation.offer_id && operation.offer_name)
+      .map((operation) => [operation.offer_id, operation.offer_name]));
     assert.strictEqual(orders.orders.length, 60);
     assert.strictEqual(orders.lineItems.length, 62);
     assert.strictEqual(orders.lineItems.reduce((sum, item) => sum + item.returnsQuantity, 0), 3);
@@ -52,6 +55,35 @@ describe('report import IPC', () => {
     assert.strictEqual(billingResult[0].fileType, 'billing');
     const insertedOperations = billingResult[0].insertedOperations;
     assert.ok(insertedOperations > 0);
+    assert.strictEqual(billingResult[0].discoveredProducts, uniqueBillingOffers.size);
+
+    const autoProducts = (await ipcHandlers.get('products:list')()).filter((product) => product.is_auto_discovered);
+    assert.strictEqual(autoProducts.length, uniqueBillingOffers.size);
+    assert.ok(autoProducts.every((product) => product.unit_cost === null && product.vat_verified === 0));
+
+    const firstAutoProduct = autoProducts[0];
+    const completedProduct = await ipcHandlers.get('products:save')(null, {
+      offerId: firstAutoProduct.offer_id,
+      offerName: firstAutoProduct.offer_name,
+      sku: 'SKU-MANUAL',
+      netPurchaseCost: '50',
+      netSalePrice: '100',
+      purchaseVatRate: '23',
+      salesVatRate: '23',
+      vatDeductiblePercent: '100',
+      vatVerified: true,
+      currency: 'PLN',
+      notes: ''
+    });
+    assert.strictEqual(completedProduct.ok, true);
+
+    const duplicateBilling = await ipcHandlers.get('import:commit')(null, [billingFile], 'orders');
+    assert.strictEqual(duplicateBilling[0].status, 'duplicate');
+    assert.strictEqual(duplicateBilling[0].discoveredProducts, 0);
+    const preservedProduct = (await ipcHandlers.get('products:list')()).find((product) => product.offer_id === firstAutoProduct.offer_id);
+    assert.strictEqual(preservedProduct.unit_cost, 50);
+    assert.strictEqual(preservedProduct.sku, 'SKU-MANUAL');
+    assert.strictEqual(preservedProduct.vat_verified, 1);
 
     const ordersResult = await ipcHandlers.get('import:commit')(null, [ordersFile], 'billing');
     assert.strictEqual(ordersResult[0].status, 'imported');
@@ -85,5 +117,55 @@ describe('report import IPC', () => {
       Math.round(repo.getTrendsData(30).reduce((sum, day) => sum + day.revenue, 0) * 100) / 100,
       Math.round(expectedRevenue * 100) / 100
     );
+  });
+
+  it('saves per-offer cost, purchase VAT, sales VAT, and VAT deductibility through IPC', async () => {
+    const db = repo.openDb();
+    db.prepare('INSERT OR REPLACE INTO product_cost (offer_id, offer_name, unit_cost, currency) VALUES (?, ?, ?, ?)')
+      .run('legacy-offer', 'Produkt ze starego katalogu', 12.5, 'PLN');
+    db.close();
+
+    const saved = await ipcHandlers.get('products:save')(null, {
+      offerId: 'offer-vat-1',
+      offerName: 'Produkt testowy',
+      sku: 'SKU-001',
+      netPurchaseCost: '100',
+      netSalePrice: '160',
+      purchaseVatRate: '23',
+      salesVatRate: '8',
+      vatDeductiblePercent: '50',
+      vatVerified: true,
+      currency: 'PLN',
+      notes: 'Testowy dostawca'
+    });
+
+    assert.deepStrictEqual(saved, { ok: true, offerId: 'offer-vat-1' });
+    const products = await ipcHandlers.get('products:list')();
+    const product = products.find((item) => item.offer_id === 'offer-vat-1');
+    const legacy = products.find((item) => item.offer_id === 'legacy-offer');
+    assert.strictEqual(product.sku, 'SKU-001');
+    assert.strictEqual(product.purchaseVat, 23);
+    assert.strictEqual(product.nonDeductibleVat, 11.5);
+    assert.strictEqual(product.grossPurchaseCost, 111.5);
+    assert.strictEqual(product.estimatedGrossPrice, 172.8);
+    assert.strictEqual(legacy.unit_cost, 12.5);
+    const productImportId = repo.insertImportRecord({
+      fileName: 'product-cost-test.csv', fileType: 'billing', rowCount: 1, fileHash: 'product-cost-test-hash'
+    });
+    repo.insertBillingOperations(productImportId, [{
+      operation_date: '2026-06-30 12:00:00', operation_type: 'Prowizja od sprzedaży',
+      offer_id: 'offer-vat-1', offer_name: 'Produkt testowy', debit: -2, credit: 0, balance: null
+    }]);
+    const offerAnalysis = repo.getProductBreakdown().find((item) => item.productId === 'offer-vat-1');
+    assert.strictEqual(offerAnalysis.purchaseVatRate, 23);
+    assert.strictEqual(offerAnalysis.effectivePurchaseUnitCost, 111.5);
+    assert.strictEqual(offerAnalysis.saleUnitGross, 172.8);
+
+    const invalidSave = await ipcHandlers.get('products:save')(null, { ...product, offerId: '', netPurchaseCost: '-1' });
+    assert.match(invalidSave.error, /identyfikator/i);
+    const deleted = await ipcHandlers.get('products:delete')(null, 'offer-vat-1');
+    assert.strictEqual(deleted.deleted, 1);
+    const remaining = await ipcHandlers.get('products:list')();
+    assert.strictEqual(remaining.some((item) => item.offer_id === 'offer-vat-1'), false);
   });
 });

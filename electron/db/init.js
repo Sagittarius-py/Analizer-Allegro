@@ -73,8 +73,16 @@ function initDatabase(app) {
     CREATE TABLE IF NOT EXISTS product_cost (
       offer_id TEXT PRIMARY KEY,
       offer_name TEXT,
+      sku TEXT,
       unit_cost REAL,
+      sale_price_net REAL,
+      purchase_vat_rate REAL NOT NULL DEFAULT 23,
+      sales_vat_rate REAL NOT NULL DEFAULT 23,
+      vat_deductible_percent REAL NOT NULL DEFAULT 100,
+      is_auto_discovered INTEGER NOT NULL DEFAULT 0,
+      vat_verified INTEGER NOT NULL DEFAULT 1,
       currency TEXT DEFAULT 'PLN',
+      notes TEXT,
       updated_at DATETIME
     );
 
@@ -95,6 +103,23 @@ function initDatabase(app) {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  const productColumns = new Set(db.prepare('PRAGMA table_info(product_cost)').all().map((column) => column.name));
+  const productMigrations = [
+    ['sku', 'TEXT'],
+    ['sale_price_net', 'REAL'],
+    ['purchase_vat_rate', 'REAL NOT NULL DEFAULT 23'],
+    ['sales_vat_rate', 'REAL NOT NULL DEFAULT 23'],
+    ['vat_deductible_percent', 'REAL NOT NULL DEFAULT 100'],
+    ['is_auto_discovered', 'INTEGER NOT NULL DEFAULT 0'],
+    ['vat_verified', 'INTEGER NOT NULL DEFAULT 1'],
+    ['notes', 'TEXT']
+  ];
+  for (const [column, definition] of productMigrations) {
+    if (!productColumns.has(column)) {
+      db.exec(`ALTER TABLE product_cost ADD COLUMN ${column} ${definition}`);
+    }
+  }
 
   const insertCategory = db.prepare('INSERT OR IGNORE INTO operation_category_map (operation_type, category, is_cost) VALUES (?, ?, ?)');
   const seed = [

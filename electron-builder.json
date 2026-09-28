@@ -10,7 +10,11 @@
     "electron/**/*",
     "package.json"
   ],
+  "asarUnpack": [
+    "**/*.node"
+  ],
   "win": {
+    "signAndEditExecutable": false,
     "target": [
       "nsis",
       "portable"
@@ -22,6 +26,7 @@
     ]
   },
   "nsis": {
+    "script": "installer.nsi",
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
