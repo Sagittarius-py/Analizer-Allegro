@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 
 export default function SettingsPage() {
+  const resetPhrase = 'USUŃ WSZYSTKIE DANE'
   const [defaultCurrency, setDefaultCurrency] = useState('PLN')
   const [currencyError, setCurrencyError] = useState<string | null>(null)
   const [autoBackup, setAutoBackup] = useState(false)
@@ -8,6 +9,12 @@ export default function SettingsPage() {
   const [backupPathError, setBackupPathError] = useState<string | null>(null)
   const [dbInfo, setDbInfo] = useState<any>(null)
   const [saving, setSaving] = useState(false)
+  const [showFactoryReset, setShowFactoryReset] = useState(false)
+  const [resetAcknowledged, setResetAcknowledged] = useState(false)
+  const [resetConfirmation, setResetConfirmation] = useState('')
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState<string | null>(null)
+  const [resetBackupPath, setResetBackupPath] = useState<string | null>(null)
 
   async function load() {
     try {
@@ -110,6 +117,37 @@ export default function SettingsPage() {
     }
   }
 
+  function cancelFactoryReset() {
+    setShowFactoryReset(false)
+    setResetAcknowledged(false)
+    setResetConfirmation('')
+    setResetError(null)
+  }
+
+  async function factoryReset() {
+    if (!resetAcknowledged || resetConfirmation !== resetPhrase) return
+    setResetting(true)
+    setResetError(null)
+    setResetBackupPath(null)
+    try {
+      const result = await (window as any).allegroSettings.factoryReset(resetConfirmation)
+      if (!result?.ok) throw new Error(result?.error || 'Reset nie powiódł się.')
+      setResetBackupPath(result.backupPath)
+      setDefaultCurrency('PLN')
+      setAutoBackup(false)
+      setBackupPath('')
+      setCurrencyError(null)
+      setBackupPathError(null)
+      cancelFactoryReset()
+      await load()
+    } catch (err) {
+      console.error('Factory reset failed', err)
+      setResetError(err instanceof Error ? err.message : 'Nie udało się wykonać resetu.')
+    } finally {
+      setResetting(false)
+    }
+  }
+
   return (
     <div className="panel p-4 sm:p-5 max-w-3xl">
       <div className="eyebrow">PREFERENCJE I DANE</div>
@@ -165,6 +203,34 @@ export default function SettingsPage() {
             <button onClick={exportDb} className="px-4 py-2 bg-green-600 text-white rounded">Eksportuj kopię bazy</button>
           </div>
         </div>
+
+        <section className="factory-reset-zone" aria-labelledby="factory-reset-title">
+          <div>
+            <h3 id="factory-reset-title" className="font-semibold">Przywracanie stanu fabrycznego</h3>
+            <p className="mt-1 text-sm text-gray-500">Usuwa zaimportowane raporty, zamówienia, rozliczenia, katalog produktów, zapisane raporty i ustawienia. Struktura aplikacji pozostaje bez zmian.</p>
+          </div>
+          {resetBackupPath ? <div role="status" className="mt-3 text-sm text-green-300">Reset zakończony. Kopia sprzed resetu: <span className="break-all">{resetBackupPath}</span></div> : null}
+          {!showFactoryReset ? (
+            <button type="button" onClick={() => { setShowFactoryReset(true); setResetError(null) }} className="factory-reset-trigger mt-3 px-3 py-2">Przywróć stan fabryczny…</button>
+          ) : (
+            <div className="factory-reset-confirm mt-4 space-y-3">
+              <div className="text-sm text-red-200"><strong>Tej operacji nie można cofnąć.</strong> Przed usunięciem danych program automatycznie zapisze kopię bazy. Reset nie rozpocznie się, jeśli kopia nie powiedzie się.</div>
+              <label className="flex items-start gap-2 text-sm text-gray-300">
+                <input type="checkbox" checked={resetAcknowledged} onChange={(event) => setResetAcknowledged(event.target.checked)} />
+                <span>Rozumiem, że wszystkie dane zapisane w aplikacji zostaną usunięte.</span>
+              </label>
+              <label className="block text-sm text-gray-400">
+                Wpisz <code>{resetPhrase}</code>, aby potwierdzić
+                <input value={resetConfirmation} onChange={(event) => setResetConfirmation(event.target.value)} autoComplete="off" spellCheck={false} className="mt-1 w-full p-2" />
+              </label>
+              {resetError ? <div role="alert" className="text-sm text-red-300">{resetError}</div> : null}
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={factoryReset} disabled={resetting || !resetAcknowledged || resetConfirmation !== resetPhrase} className="factory-reset-trigger px-3 py-2">{resetting ? 'Tworzę kopię i czyszczę dane…' : 'Utwórz kopię i usuń dane'}</button>
+                <button type="button" onClick={cancelFactoryReset} disabled={resetting} className="secondary-action px-3 py-2">Anuluj</button>
+              </div>
+            </div>
+          )}
+        </section>
       </div>
     </div>
   )

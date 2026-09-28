@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('allegroSettings', {
   delete: (key) => ipcRenderer.invoke('settings:delete', key),
   exportDb: () => ipcRenderer.invoke('settings:exportDb')
   ,
+  factoryReset: (confirmation) => ipcRenderer.invoke('settings:factoryReset', confirmation),
   validatePath: (p) => ipcRenderer.invoke('settings:validatePath', p),
   selectFolder: () => ipcRenderer.invoke('settings:selectFolder'),
   createFolder: (p) => ipcRenderer.invoke('settings:createFolder', p)

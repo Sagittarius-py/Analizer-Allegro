@@ -40,6 +40,41 @@ function getDatabaseInfo() {
   }
 }
 
+async function createDatabaseBackup(destinationPath) {
+  const db = openDb();
+  try {
+    await db.backup(destinationPath);
+  } finally {
+    db.close();
+  }
+
+  const backupDb = new Database(destinationPath, { readonly: true });
+  try {
+    const integrity = backupDb.pragma('integrity_check', { simple: true });
+    if (integrity !== 'ok') throw new Error('Kopia bazy nie przeszła kontroli integralności.');
+  } finally {
+    backupDb.close();
+  }
+  return destinationPath;
+}
+
+function resetUserData() {
+  const db = openDb();
+  const tables = ['billing_operations', 'line_items', 'orders', 'product_cost', 'saved_reports', 'imports', 'app_settings'];
+  const reset = db.transaction(() => {
+    const removed = {};
+    for (const table of tables) {
+      removed[table] = db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
+      db.prepare(`DELETE FROM ${table}`).run();
+      db.prepare('DELETE FROM sqlite_sequence WHERE name = ?').run(table);
+    }
+    return removed;
+  });
+  const removed = reset();
+  db.close();
+  return removed;
+}
+
 function listImports(limit = 100) {
   const db = openDb();
   const stmt = db.prepare('SELECT id, file_name, file_type, imported_at, row_count, date_range_from, date_range_to, file_hash FROM imports ORDER BY imported_at DESC LIMIT ?');
@@ -72,10 +107,28 @@ function insertImportRecord({ fileName, fileType, rowCount, dateFrom = null, dat
 function listProducts() {
   const db = openDb();
   const products = db.prepare(`
-    SELECT offer_id, offer_name, sku, unit_cost, sale_price_net, purchase_vat_rate, sales_vat_rate,
-      vat_deductible_percent, is_auto_discovered, vat_verified, currency, notes, updated_at
-    FROM product_cost
-    ORDER BY offer_name COLLATE NOCASE, offer_id
+    SELECT p.offer_id, p.offer_name, p.sku, p.unit_cost, p.sale_price_net, p.purchase_vat_rate, p.sales_vat_rate,
+      p.vat_deductible_percent, p.is_auto_discovered, p.vat_verified, p.currency, p.notes, p.updated_at,
+      fees.gross_fees as seller_fee_debits,
+      fees.fee_credits as seller_fee_credits,
+      fees.operation_count as seller_fee_operations,
+      fees.date_from as seller_fee_date_from,
+      fees.date_to as seller_fee_date_to
+    FROM product_cost p
+    LEFT JOIN (
+      SELECT b.offer_id,
+        SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END) as gross_fees,
+        SUM(CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) as fee_credits,
+        COUNT(*) as operation_count,
+        MIN(date(b.operation_date)) as date_from,
+        MAX(date(b.operation_date)) as date_to
+      FROM billing_operations b
+      LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
+      WHERE b.offer_id IS NOT NULL
+        AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+      GROUP BY b.offer_id
+    ) fees ON fees.offer_id = p.offer_id
+    ORDER BY p.offer_name COLLATE NOCASE, p.offer_id
   `).all();
   db.close();
   return products.map((product) => {
@@ -85,6 +138,12 @@ function listProducts() {
     return {
       ...product,
       unit_cost: netCost,
+      sellerFeeDebits: Math.round(Number(product.seller_fee_debits || 0) * 100) / 100,
+      sellerFeeCredits: Math.round(Number(product.seller_fee_credits || 0) * 100) / 100,
+      sellerFeesNet: Math.round((Number(product.seller_fee_debits || 0) - Number(product.seller_fee_credits || 0)) * 100) / 100,
+      sellerFeeOperations: Number(product.seller_fee_operations || 0),
+      sellerFeeDateFrom: product.seller_fee_date_from,
+      sellerFeeDateTo: product.seller_fee_date_to,
       purchaseVat: purchaseVat == null ? null : Math.round(purchaseVat * 100) / 100,
       nonDeductibleVat: purchaseVat == null ? null : Math.round(purchaseVat * (100 - deductiblePercent) * 100) / 10000,
       grossPurchaseCost: netCost == null || !product.vat_verified ? null : Math.round((netCost + purchaseVat * (100 - deductiblePercent) / 100) * 100) / 100,
@@ -107,8 +166,8 @@ function ensureProductsFromBillingOperations(operations = []) {
   const db = openDb();
   const insert = db.prepare(`
     INSERT OR IGNORE INTO product_cost
-      (offer_id, offer_name, unit_cost, currency, is_auto_discovered, vat_verified, updated_at)
-    VALUES (?, ?, NULL, 'PLN', 1, 0, ?)
+      (offer_id, offer_name, unit_cost, purchase_vat_rate, sales_vat_rate, vat_deductible_percent, currency, is_auto_discovered, vat_verified, updated_at)
+    VALUES (?, ?, NULL, 0, 0, 0, 'PLN', 1, 0, ?)
   `);
   const fillName = db.prepare(`
     UPDATE product_cost SET offer_name = ?
@@ -294,7 +353,7 @@ function getMetricsSummary(opts = {}) {
   };
 }
 
-module.exports = { openDb, getDatabaseInfo, listImports, computeHash, findImportByHash, insertImportRecord, insertOrders, insertBillingOperations, linkBillingOperationsToOrders, getMetricsSummary, listProducts, saveProduct, deleteProduct, ensureProductsFromBillingOperations };
+module.exports = { openDb, getDatabaseInfo, createDatabaseBackup, resetUserData, listImports, computeHash, findImportByHash, insertImportRecord, insertOrders, insertBillingOperations, linkBillingOperationsToOrders, getMetricsSummary, listProducts, saveProduct, deleteProduct, ensureProductsFromBillingOperations };
 
 // Settings helpers
 function getSetting(key) {

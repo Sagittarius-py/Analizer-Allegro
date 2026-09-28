@@ -3,6 +3,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const Module = require('module');
+const Database = require('better-sqlite3');
 const { parseBillingCsv } = require('../electron/importers/billingParser');
 const { parseOrdersCsv } = require('../electron/importers/ordersParser');
 
@@ -60,6 +61,24 @@ describe('report import IPC', () => {
     const autoProducts = (await ipcHandlers.get('products:list')()).filter((product) => product.is_auto_discovered);
     assert.strictEqual(autoProducts.length, uniqueBillingOffers.size);
     assert.ok(autoProducts.every((product) => product.unit_cost === null && product.vat_verified === 0));
+    for (const product of autoProducts) {
+      assert.strictEqual(product.offer_name, uniqueBillingOffers.get(product.offer_id));
+      assert.strictEqual(product.purchaseVat, null);
+      assert.strictEqual(product.grossPurchaseCost, null);
+    }
+    const offerFees = autoProducts.find((product) => product.offer_id === autoProducts[0].offer_id);
+    const categoryDb = repo.openDb();
+    const feeTypes = new Set(categoryDb.prepare('SELECT operation_type FROM operation_category_map WHERE is_cost = 1').all().map((row) => row.operation_type));
+    categoryDb.close();
+    const actualOfferCostOperations = billing.operations.filter((operation) =>
+      operation.offer_id === autoProducts[0].offer_id && feeTypes.has(operation.operation_type)
+    );
+    const actualOfferDebits = actualOfferCostOperations.reduce((sum, operation) => sum + Math.abs(operation.debit), 0);
+    assert.strictEqual(offerFees.sellerFeeOperations, actualOfferCostOperations.length);
+    assert.strictEqual(offerFees.sellerFeeDebits, Math.round(actualOfferDebits * 100) / 100);
+    assert.strictEqual(offerFees.sellerFeesNet, Math.round((actualOfferCostOperations.reduce((sum, operation) => sum + Math.max(0, -operation.debit), 0) - actualOfferCostOperations.reduce((sum, operation) => sum + Math.max(0, operation.credit), 0)) * 100) / 100);
+    assert.strictEqual(offerFees.unit_cost, null);
+    assert.strictEqual(offerFees.grossPurchaseCost, null);
 
     const firstAutoProduct = autoProducts[0];
     const completedProduct = await ipcHandlers.get('products:save')(null, {
@@ -167,5 +186,55 @@ describe('report import IPC', () => {
     assert.strictEqual(deleted.deleted, 1);
     const remaining = await ipcHandlers.get('products:list')();
     assert.strictEqual(remaining.some((item) => item.offer_id === 'offer-vat-1'), false);
+  });
+
+  it('requires the exact reset phrase, backs up first, clears user data, and preserves category defaults', async () => {
+    const resetHandler = ipcHandlers.get('settings:factoryReset');
+    const rejected = await resetHandler(null, 'USUŃ DANE');
+    assert.match(rejected.error, /USUŃ WSZYSTKIE DANE/);
+    assert.ok(repo.listImports().length > 0);
+
+    const createBackup = repo.createDatabaseBackup;
+    repo.createDatabaseBackup = async () => { throw new Error('simulated backup failure'); };
+    const backupFailure = await resetHandler(null, 'USUŃ WSZYSTKIE DANE');
+    repo.createDatabaseBackup = createBackup;
+    assert.ok(backupFailure.error);
+    assert.ok(repo.listImports().length > 0);
+
+    const beforeReset = repo.openDb();
+    const expectedCounts = {
+      orders: beforeReset.prepare('SELECT COUNT(*) AS count FROM orders').get().count,
+      billing: beforeReset.prepare('SELECT COUNT(*) AS count FROM billing_operations').get().count,
+      products: beforeReset.prepare('SELECT COUNT(*) AS count FROM product_cost').get().count
+    };
+    beforeReset.close();
+
+    const resetResult = await resetHandler(null, 'USUŃ WSZYSTKIE DANE');
+    assert.strictEqual(resetResult.ok, true);
+    assert.ok(fs.existsSync(resetResult.backupPath));
+
+    const backup = new Database(resetResult.backupPath, { readonly: true });
+    try {
+      assert.strictEqual(backup.prepare('SELECT COUNT(*) AS count FROM orders').get().count, expectedCounts.orders);
+      assert.strictEqual(backup.prepare('SELECT COUNT(*) AS count FROM billing_operations').get().count, expectedCounts.billing);
+      assert.strictEqual(backup.prepare('SELECT COUNT(*) AS count FROM product_cost').get().count, expectedCounts.products);
+    } finally {
+      backup.close();
+    }
+
+    assert.strictEqual(repo.listImports().length, 0);
+    assert.strictEqual(repo.listProducts().length, 0);
+    const db = repo.openDb();
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS count FROM orders').get().count, 0);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS count FROM billing_operations').get().count, 0);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS count FROM saved_reports').get().count, 0);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS count FROM app_settings').get().count, 0);
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS count FROM operation_category_map').get().count, 11);
+    db.close();
+
+    const newImportId = repo.insertImportRecord({
+      fileName: 'after-reset.csv', fileType: 'orders', rowCount: 1, fileHash: 'after-reset-hash'
+    });
+    assert.strictEqual(newImportId, 1);
   });
 });

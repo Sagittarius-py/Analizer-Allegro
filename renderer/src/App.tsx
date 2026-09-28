@@ -53,7 +53,7 @@ export default function App() {
           <div className="local-status">Dane lokalne</div>
         </header>
 
-        <main className="app-content">
+        <main className={`app-content${page === 'products' ? ' app-content-products' : ''}`}>
           <div>
             {page === 'home' && <Dashboard onNavigate={navigateTo} />}
             {page === 'import' && <ImportPage />}

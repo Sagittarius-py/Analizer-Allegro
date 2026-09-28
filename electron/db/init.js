@@ -80,7 +80,7 @@ function initDatabase(app) {
       sales_vat_rate REAL NOT NULL DEFAULT 23,
       vat_deductible_percent REAL NOT NULL DEFAULT 100,
       is_auto_discovered INTEGER NOT NULL DEFAULT 0,
-      vat_verified INTEGER NOT NULL DEFAULT 1,
+      vat_verified INTEGER NOT NULL DEFAULT 0,
       currency TEXT DEFAULT 'PLN',
       notes TEXT,
       updated_at DATETIME
@@ -112,7 +112,7 @@ function initDatabase(app) {
     ['sales_vat_rate', 'REAL NOT NULL DEFAULT 23'],
     ['vat_deductible_percent', 'REAL NOT NULL DEFAULT 100'],
     ['is_auto_discovered', 'INTEGER NOT NULL DEFAULT 0'],
-    ['vat_verified', 'INTEGER NOT NULL DEFAULT 1'],
+    ['vat_verified', 'INTEGER NOT NULL DEFAULT 0'],
     ['notes', 'TEXT']
   ];
   for (const [column, definition] of productMigrations) {

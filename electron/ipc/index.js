@@ -17,6 +17,8 @@ const path = require('path');
 // Stub for when DB is disabled in dev mode
 const repoStub = {
   getDatabaseInfo: () => ({ error: 'DB disabled in dev mode' }),
+  createDatabaseBackup: () => { throw new Error('Baza danych jest niedostępna.'); },
+  resetUserData: () => { throw new Error('Baza danych jest niedostępna.'); },
   listImports: () => [],
   getMetricsSummary: () => ({ error: 'DB disabled in dev mode' }),
   getSetting: () => null,
@@ -99,6 +101,25 @@ function registerIpcHandlers() {
       return { deleted: changes };
     } catch (err) {
       return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('settings:factoryReset', async (event, confirmation) => {
+    const requiredConfirmation = 'USUŃ WSZYSTKIE DANE';
+    if (confirmation !== requiredConfirmation) {
+      return { error: `Wpisz dokładnie: ${requiredConfirmation}` };
+    }
+    try {
+      const backupFolder = path.join(app.getPath('userData'), 'allegro-profit-analyzer', 'backups');
+      fs.mkdirSync(backupFolder, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(backupFolder, `kopia-przed-resetem-${timestamp}.db`);
+      await useRepo.createDatabaseBackup(backupPath);
+      const removed = useRepo.resetUserData();
+      return { ok: true, backupPath, removed };
+    } catch (err) {
+      console.error('Factory reset failed', err);
+      return { error: 'Nie udało się wykonać resetu. Dane nie zostały celowo usunięte, jeśli kopia zapasowa się nie powiodła.' };
     }
   });
 
