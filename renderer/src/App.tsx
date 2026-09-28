@@ -7,29 +7,52 @@ import OrdersPage from './pages/Orders'
 import CostsPage from './pages/Costs'
 import ReportsPage from './pages/Reports'
 
+const pageTitles: Record<string, string> = {
+  home: 'Dashboard',
+  import: 'Import danych',
+  orders: 'Zamówienia',
+  costs: 'Koszty i produkty',
+  reports: 'Raporty',
+  settings: 'Ustawienia'
+}
+
 export default function App() {
   const [page, setPage] = useState('home')
   const [mobileOpen, setMobileOpen] = useState(false)
+  const navigateTo = (nextPage: string) => {
+    setPage(nextPage)
+    setMobileOpen(false)
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex">
-      <UserPanel page={page} setPage={setPage} />
+    <div className="app-shell min-h-screen flex">
+      <UserPanel page={page} setPage={navigateTo} mobileOpen={mobileOpen} onClose={() => setMobileOpen(false)} />
+      <button
+        aria-label="Zamknij nawigację"
+        tabIndex={mobileOpen ? 0 : -1}
+        className={`mobile-nav-backdrop ${mobileOpen ? 'mobile-nav-backdrop-open' : ''}`}
+        onClick={() => setMobileOpen(false)}
+      />
 
-      <div className="flex-1 flex flex-col">
-        <header className="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border-b">
+      <div className="app-main flex-1 flex flex-col">
+        <header className="app-header flex items-center justify-between bg-white border-b">
           <div className="flex items-center gap-3">
-            <button className="md:hidden px-2 py-1 bg-gray-100 rounded" onClick={() => setMobileOpen(!mobileOpen)}>Menu</button>
-            <h1 className="text-lg font-bold">Allegro Profit Analyzer</h1>
+            <button
+              className="mobile-menu-button md:hidden"
+              aria-label={mobileOpen ? 'Zamknij menu' : 'Otwórz menu'}
+              aria-expanded={mobileOpen}
+              onClick={() => setMobileOpen((open) => !open)}
+            >
+              <span aria-hidden="true">{mobileOpen ? '×' : '☰'}</span>
+            </button>
+            <h1 className="page-title">{pageTitles[page] || 'Allegro Profit Analyzer'}</h1>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="text-sm text-gray-600">Lokalnie</div>
-            <div className="w-8 h-8 rounded-full bg-gray-200" />
-          </div>
+          <div className="local-status">Dane lokalne</div>
         </header>
 
-        <main className="p-6">
-          <div className="max-w-6xl mx-auto">
-            {page === 'home' && <Dashboard />}
+        <main className="app-content">
+          <div>
+            {page === 'home' && <Dashboard onNavigate={navigateTo} />}
             {page === 'import' && <ImportPage />}
             {page === 'orders' && <OrdersPage />}
             {page === 'costs' && <CostsPage />}

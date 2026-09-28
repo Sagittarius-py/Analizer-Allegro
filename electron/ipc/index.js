@@ -1,7 +1,7 @@
-const { ipcMain } = require('electron');
+const { app, ipcMain } = require('electron');
 let repo = null;
 try {
-  const dbEnabled = process.env.ELECTRON_ENABLE_DB !== 'false' && !process.env.SKIP_DB;
+  const dbEnabled = !process.env.SKIP_DB && (app.isPackaged || process.env.ELECTRON_ENABLE_DB === '1');
   if (dbEnabled) {
     repo = require('../db/repository');
   }
@@ -10,6 +10,7 @@ try {
 }
 const ordersParser = require('../importers/ordersParser');
 const billingParser = require('../importers/billingParser');
+const { detectReportType } = require('../importers/detectReportType');
 const fs = require('fs');
 const path = require('path');
 
@@ -28,10 +29,15 @@ const repoStub = {
   findImportByHash: () => null,
   insertImportRecord: () => 0,
   insertOrders: () => 0,
+  linkBillingOperationsToOrders: () => 0,
   insertBillingOperations: () => 0,
   getCostsBreakdown: () => ({ error: 'DB disabled in dev mode' }),
   getProductBreakdown: () => [],
   getTrendsData: () => [],
+  getSourceAnalysis: () => ({
+    orders: { total: 0, dateFrom: null, dateTo: null, active: 0, cancelled: 0, cancelledValue: 0, activeRevenue: 0, lineItems: 0, returnedLineItems: 0, returnedUnits: 0 },
+    billing: { operations: 0, dateFrom: null, dateTo: null, orderReferences: 0, unmatchedOrderReferences: 0, grossCosts: 0, costCredits: 0, netCosts: 0, balance: null, linkedOrders: 0 }
+  }),
   saveReport: () => 0,
   listReports: () => [],
   getReport: () => null,
@@ -158,28 +164,39 @@ function registerIpcHandlers() {
   ipcMain.handle('import:parseAndPreview', async (event, files = []) => {
     const previews = [];
     for (const f of files) {
+      if (f.error) {
+        previews.push({ fileName: f.name, error: 'file_read_error', message: f.error });
+        continue;
+      }
       const text = f.content || '';
-      const firstNonEmpty = text.split(/\r?\n/).find(l => l && l.trim());
-      if (!firstNonEmpty) {
-        previews.push({ fileName: f.name, error: 'empty' });
-        continue;
-      }
-      if (firstNonEmpty.startsWith('Type,')) {
-        const parsed = ordersParser.parseOrdersCsv(text);
-        previews.push({ fileName: f.name, fileType: 'orders', ordersCount: parsed.orders.length, lineItemsCount: parsed.lineItems.length, sample: parsed.orders.slice(0,3) });
-        continue;
-      }
-      if (firstNonEmpty.includes(';') && firstNonEmpty.includes('Typ operacji')) {
-        const parsed = billingParser.parseBillingCsv(text);
-        previews.push({ fileName: f.name, fileType: 'billing', operationsCount: parsed.operations.length, sample: parsed.operations.slice(0,3) });
-        continue;
-      }
-      // fallback: try billing parser
-      try {
-        const parsed = billingParser.parseBillingCsv(text);
-        previews.push({ fileName: f.name, fileType: 'billing', operationsCount: parsed.operations.length, sample: parsed.operations.slice(0,3) });
-      } catch (err) {
+      const fileType = detectReportType(text);
+      if (!fileType) {
         previews.push({ fileName: f.name, error: 'unknown_format' });
+        continue;
+      }
+      try {
+        if (fileType === 'orders') {
+          const parsed = ordersParser.parseOrdersCsv(text);
+          previews.push({
+            fileName: f.name,
+            fileType,
+            ordersCount: parsed.orders.length,
+            lineItemsCount: parsed.lineItems.length,
+            returnsQuantity: parsed.lineItems.reduce((sum, item) => sum + item.returnsQuantity, 0),
+            sample: parsed.orders.slice(0, 3)
+          });
+        } else {
+          const parsed = billingParser.parseBillingCsv(text);
+          previews.push({
+            fileName: f.name,
+            fileType,
+            operationsCount: parsed.operations.length,
+            debitTotal: parsed.operations.reduce((sum, operation) => sum + Math.abs(Math.min(operation.debit, 0)), 0),
+            sample: parsed.operations.slice(0, 3)
+          });
+        }
+      } catch (err) {
+        previews.push({ fileName: f.name, fileType, error: 'parse_error', message: err.message });
       }
     }
     return previews;
@@ -187,6 +204,9 @@ function registerIpcHandlers() {
 
   // Commit parsed files to DB
   ipcMain.handle('import:commit', async (event, files = []) => {
+    if (!repo) {
+      return files.map((file) => ({ fileName: file.name, status: 'error', error: 'database_disabled' }));
+    }
     const results = [];
     // optional auto-backup before making changes
     try {
@@ -209,33 +229,65 @@ function registerIpcHandlers() {
       // ignore
     }
     for (const f of files) {
-      const content = f.content || '';
-      const fileHash = useRepo.computeHash(content);
-      const existing = useRepo.findImportByHash(fileHash);
-      if (existing) {
-        results.push({ fileName: f.name, status: 'duplicate', importId: existing.id });
+      if (f.error) {
+        results.push({ fileName: f.name, status: 'error', error: 'file_read_error', message: f.error });
         continue;
       }
-      // parse to determine type
-      const firstNonEmpty = content.split(/\r?\n/).find(l => l && l.trim());
-      let fileType = 'unknown';
-      let orders = [];
-      let operations = [];
-      if (firstNonEmpty && firstNonEmpty.startsWith('Type,')) {
-        fileType = 'orders';
-        const parsed = ordersParser.parseOrdersCsv(content);
-        orders = parsed.orders;
-      } else {
-        fileType = 'billing';
-        const parsed = billingParser.parseBillingCsv(content);
-        operations = parsed.operations;
+      const content = f.content || '';
+      const fileType = detectReportType(content);
+      if (!fileType) {
+        results.push({ fileName: f.name, status: 'error', error: 'unknown_format' });
+        continue;
       }
-      const importId = useRepo.insertImportRecord({ fileName: f.name, fileType, rowCount: (orders.length || operations.length), fileHash });
-      let insertedOrders = 0;
-      let insertedOps = 0;
-      if (orders.length) insertedOrders = useRepo.insertOrders(importId, orders);
-      if (operations.length) insertedOps = useRepo.insertBillingOperations(importId, operations);
-      results.push({ fileName: f.name, status: 'imported', importId, insertedOrders, insertedOperations: insertedOps });
+      try {
+        const parsed = fileType === 'orders'
+          ? ordersParser.parseOrdersCsv(content)
+          : billingParser.parseBillingCsv(content);
+        const rows = fileType === 'orders'
+          ? parsed.orders.length + parsed.lineItems.length
+          : parsed.operations.length;
+        if (!rows) {
+          results.push({ fileName: f.name, fileType, status: 'error', error: 'no_data_rows' });
+          continue;
+        }
+
+        const fileHash = useRepo.computeHash(content);
+        const existing = useRepo.findImportByHash(fileHash);
+        if (existing) {
+          results.push({ fileName: f.name, fileType, status: 'duplicate', importId: existing.id });
+          continue;
+        }
+
+        const dates = fileType === 'orders'
+          ? parsed.orders.map((order) => order.orderDate).filter(Boolean).map((date) => date.slice(0, 10))
+          : parsed.operations.map((operation) => operation.operation_date).filter(Boolean).map((date) => date.slice(0, 10));
+        const importId = useRepo.insertImportRecord({
+          fileName: f.name,
+          fileType,
+          rowCount: rows,
+          dateFrom: dates.length ? dates.reduce((min, date) => date < min ? date : min) : null,
+          dateTo: dates.length ? dates.reduce((max, date) => date > max ? date : max) : null,
+          fileHash
+        });
+        if (fileType === 'orders') {
+          const insertedOrders = useRepo.insertOrders(importId, parsed.orders, parsed.lineItems);
+          const linkedOperations = useRepo.linkBillingOperationsToOrders();
+          results.push({
+            fileName: f.name,
+            status: 'imported',
+            fileType,
+            importId,
+            insertedOrders,
+            insertedLineItems: parsed.lineItems.length,
+            linkedBillingOperations: linkedOperations
+          });
+        } else {
+          const insertedOperations = useRepo.insertBillingOperations(importId, parsed.operations);
+          results.push({ fileName: f.name, status: 'imported', fileType, importId, insertedOperations });
+        }
+      } catch (err) {
+        results.push({ fileName: f.name, fileType, status: 'error', error: 'import_failed', message: err.message });
+      }
     }
     return results;
   });
@@ -287,6 +339,14 @@ function registerIpcHandlers() {
   ipcMain.handle('trends:data', async (event, days = 30) => {
     try {
       return useRepo.getTrendsData(days);
+    } catch (err) {
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('analytics:sourceSummary', async () => {
+    try {
+      return useRepo.getSourceAnalysis();
     } catch (err) {
       return { error: err.message };
     }

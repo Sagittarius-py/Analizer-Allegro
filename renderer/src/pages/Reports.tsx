@@ -61,18 +61,18 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-4 p-4">
-      <h2 className="text-lg font-semibold">Raporty</h2>
+      <div><div className="eyebrow">ZAPISANE MIGAWKI</div><h2 className="section-title">Raporty</h2></div>
 
-      <div className="p-4 bg-white dark:bg-gray-800 rounded shadow">
+      <div className="panel p-4 sm:p-5">
         <h3 className="font-medium mb-3">Zapisz nowy raport</h3>
-        <div className="grid grid-cols-1 gap-2">
+        <div className="grid grid-cols-1 gap-3">
           <input
             value={reportName}
             onChange={e => setReportName(e.target.value)}
             placeholder="Nazwa raportu"
             className="p-2 border rounded"
           />
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <input
               type="date"
               value={dateFrom}
@@ -89,19 +89,19 @@ export default function ReportsPage() {
           <button
             onClick={saveReport}
             disabled={saving}
-            className="px-3 py-2 bg-blue-600 text-white rounded"
+            className="px-4 py-2 bg-blue-600 text-white rounded"
           >
             {saving ? 'Zapisuję...' : 'Zapisz raport'}
           </button>
         </div>
       </div>
 
-      <div className="p-4 bg-white dark:bg-gray-800 rounded shadow">
+      <div className="panel p-4 sm:p-5">
         <h3 className="font-medium mb-3">Zapisane raporty</h3>
         <ul className="space-y-2">
           {reports.length === 0 && <li className="text-sm text-gray-500">Brak raportów</li>}
           {reports.map((r: any) => (
-            <li key={r.id} className="p-2 border rounded flex items-center justify-between">
+            <li key={r.id} className="report-row flex flex-wrap items-center justify-between gap-3 p-3">
               <div>
                 <div className="font-medium">
                   {r.is_pinned ? '📌 ' : ''}{r.name}
@@ -110,22 +110,22 @@ export default function ReportsPage() {
                   {r.date_from} → {r.date_to} | {new Date(r.created_at).toLocaleString()}
                 </div>
               </div>
-              <div className="flex gap-1">
+              <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => togglePin(r.id, r.is_pinned)}
-                  className="px-2 py-1 text-xs bg-yellow-200 rounded"
+                  className="px-3 py-1 text-xs bg-yellow-200 rounded"
                 >
-                  {r.is_pinned ? 'Odepnij' : 'Epnij'}
+                  {r.is_pinned ? 'Odepnij' : 'Przypnij'}
                 </button>
                 <button
                   onClick={() => viewReport(r.id)}
-                  className="px-2 py-1 text-xs bg-blue-400 rounded"
+                  className="px-3 py-1 text-xs bg-blue-400 rounded"
                 >
                   Podgląd
                 </button>
                 <button
                   onClick={() => deleteReport(r.id)}
-                  className="px-2 py-1 text-xs bg-red-400 rounded"
+                  className="px-3 py-1 text-xs bg-red-400 rounded"
                 >
                   Usuń
                 </button>
@@ -136,7 +136,7 @@ export default function ReportsPage() {
       </div>
 
       {selected ? (
-        <div className="p-4 bg-white dark:bg-gray-800 rounded shadow">
+        <div className="panel p-4 sm:p-5">
           <h3 className="font-medium">Raport: {selected.name}</h3>
           <div className="mt-3 text-sm">
             <div>Okres: {selected.date_from} → {selected.date_to}</div>

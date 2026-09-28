@@ -18,6 +18,7 @@ function openDb() {
     initDatabase(app);
   }
   const db = new Database(dbPath, { readonly: false });
+  db.pragma('foreign_keys = ON');
   return db;
 }
 
@@ -68,37 +69,66 @@ function insertImportRecord({ fileName, fileType, rowCount, dateFrom = null, dat
   return id;
 }
 
-function insertOrders(importId, orders) {
-  if (!orders || !orders.length) return 0;
+function insertOrders(importId, orders, lineItems = []) {
+  if ((!orders || !orders.length) && (!lineItems || !lineItems.length)) return 0;
   const db = openDb();
   const insertOrder = db.prepare('INSERT OR REPLACE INTO orders (order_id, order_date, seller_status, marketplace, payment_amount, payment_currency, fulfillment_provider, import_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
   const insertLine = db.prepare('INSERT OR REPLACE INTO line_items (line_item_id, returns_quantity, import_id) VALUES (?, ?, ?)');
-  const txn = db.transaction((rows) => {
-    for (const o of rows) {
+  const txn = db.transaction(() => {
+    for (const o of orders || []) {
       insertOrder.run(o.orderId, o.orderDate, o.sellerStatus, o.marketplace, o.paymentAmount, o.paymentCurrency, o.fulfillmentProvider, importId);
-      // line items are not connected to orders in this MVP import; skipped
     }
+    for (const item of lineItems || []) insertLine.run(item.lineItemId, item.returnsQuantity, importId);
   });
-  txn(orders);
+  txn();
   db.close();
-  return orders.length;
+  return (orders || []).length;
 }
 
 function insertBillingOperations(importId, operations) {
   if (!operations || !operations.length) return 0;
   const db = openDb();
-  const findStmt = db.prepare('SELECT COUNT(*) as c FROM billing_operations WHERE operation_date = ? AND operation_type = ? AND IFNULL(offer_id,"") = IFNULL(?,"") AND IFNULL(balance,0) = IFNULL(?,0) AND IFNULL(credit,0) = IFNULL(?,0) AND IFNULL(debit,0) = IFNULL(?,0)');
+  const findStmt = db.prepare("SELECT COUNT(*) as c FROM billing_operations WHERE operation_date = ? AND operation_type = ? AND IFNULL(offer_id, '') = IFNULL(?, '') AND IFNULL(balance, 0) = IFNULL(?, 0) AND IFNULL(credit, 0) = IFNULL(?, 0) AND IFNULL(debit, 0) = IFNULL(?, 0) AND IFNULL(raw_details, '') = IFNULL(?, '')");
   const insertStmt = db.prepare(`INSERT INTO billing_operations (operation_date, offer_name, offer_id, operation_type, operation_category, credit, debit, balance, raw_details, related_order_id, service_code, service_name, waybill_number, is_smart_delivery, import_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const categoryStmt = db.prepare('SELECT category FROM operation_category_map WHERE operation_type = ?');
+  const orderStmt = db.prepare('SELECT 1 FROM orders WHERE order_id = ?');
   const txn = db.transaction((ops) => {
+    let inserted = 0;
     for (const o of ops) {
-      const exists = findStmt.get(o.operation_date, o.operation_type, o.offer_id, o.balance, o.credit, o.debit).c;
+      const exists = findStmt.get(o.operation_date, o.operation_type, o.offer_id, o.balance, o.credit, o.debit, o.raw_details).c;
       if (exists) continue;
-      insertStmt.run(o.operation_date, o.offer_name, o.offer_id, o.operation_type, o.operation_category || null, o.credit, o.debit, o.balance, o.raw_details || null, o.related_order_id || null, o.service_code || null, o.service_name || null, o.waybill_number || null, o.is_smart_delivery ? 1 : 0, importId);
+      const category = categoryStmt.get(o.operation_type);
+      const relatedOrderId = o.related_order_id && orderStmt.get(o.related_order_id) ? o.related_order_id : null;
+      const fallbackCategory = o.debit < 0 ? 'other' : null;
+      insertStmt.run(o.operation_date, o.offer_name, o.offer_id, o.operation_type, o.operation_category || (category && category.category) || fallbackCategory, o.credit, o.debit, o.balance, o.raw_details || null, relatedOrderId, o.service_code || null, o.service_name || null, o.waybill_number || null, o.is_smart_delivery ? 1 : 0, importId);
+      inserted += 1;
     }
+    return inserted;
   });
-  txn(operations);
+  const inserted = txn(operations);
   db.close();
-  return operations.length;
+  return inserted;
+}
+
+function linkBillingOperationsToOrders() {
+  const db = openDb();
+  const pending = db.prepare("SELECT id, raw_details FROM billing_operations WHERE related_order_id IS NULL AND raw_details LIKE '%Identyfikator zamówienia:%'").all();
+  const findOrder = db.prepare('SELECT 1 FROM orders WHERE order_id = ?');
+  const linkOrder = db.prepare('UPDATE billing_operations SET related_order_id = ? WHERE id = ?');
+  const txn = db.transaction((rows) => {
+    let linked = 0;
+    for (const row of rows) {
+      const match = row.raw_details.match(/Identyfikator zamówienia:\s*([a-f0-9-]{36})/i);
+      if (match && findOrder.get(match[1])) {
+        linkOrder.run(match[1], row.id);
+        linked += 1;
+      }
+    }
+    return linked;
+  });
+  const linked = txn(pending);
+  db.close();
+  return linked;
 }
 
 function getMetricsSummary(opts = {}) {
@@ -119,7 +149,9 @@ function getMetricsSummary(opts = {}) {
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
 
   const ordersCountRow = db.prepare(`SELECT COUNT(*) as c FROM orders ${where}`).get(...params);
-  const revenueRow = db.prepare(`SELECT IFNULL(SUM(payment_amount),0) as s FROM orders ${where}`).get(...params);
+  const revenueFilter = filters.concat("UPPER(IFNULL(seller_status, '')) <> 'CANCELLED'");
+  const revenueWhere = `WHERE ${revenueFilter.join(' AND ')}`;
+  const revenueRow = db.prepare(`SELECT IFNULL(SUM(payment_amount),0) as s FROM orders ${revenueWhere}`).get(...params);
 
   // Latest balance from billing_operations (within optional date range)
   const balFilters = [];
@@ -152,7 +184,7 @@ function getMetricsSummary(opts = {}) {
   };
 }
 
-module.exports = { openDb, getDatabaseInfo, listImports, computeHash, findImportByHash, insertImportRecord, insertOrders, insertBillingOperations, getMetricsSummary };
+module.exports = { openDb, getDatabaseInfo, listImports, computeHash, findImportByHash, insertImportRecord, insertOrders, insertBillingOperations, linkBillingOperationsToOrders, getMetricsSummary };
 
 // Settings helpers
 function getSetting(key) {
@@ -214,11 +246,9 @@ function listOrders({ limit = 50, offset = 0, q = null } = {}) {
 function getOrderDetails(orderId) {
   const db = openDb();
   const order = db.prepare('SELECT * FROM orders WHERE order_id = ?').get(orderId);
-  const items = db.prepare('SELECT * FROM line_items WHERE line_item_id IN (SELECT line_item_id FROM line_items WHERE import_id = orders.import_id) LIMIT 0').all();
-  // line_items currently only has line_item_id and returns_quantity in schema; fetch related rows by import
-  const lineRows = db.prepare('SELECT * FROM line_items WHERE import_id = (SELECT import_id FROM orders WHERE order_id = ?)').all(orderId);
+  const billingOperations = db.prepare('SELECT * FROM billing_operations WHERE related_order_id = ? ORDER BY operation_date').all(orderId);
   db.close();
-  return { order, lineItems: lineRows };
+  return { order, billingOperations };
 }
 
 module.exports.listOrders = listOrders;
@@ -228,54 +258,75 @@ module.exports.getOrderDetails = getOrderDetails;
 function getCostsBreakdown() {
   const db = openDb();
   const rows = db.prepare(`
-    SELECT operation_category, SUM(debit) as total_cost, COUNT(*) as count
-    FROM billing_operations
-    WHERE debit > 0
-    GROUP BY operation_category
+    SELECT COALESCE(b.operation_category, m.category, 'other') as category,
+      SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END - CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) as total_cost,
+      COUNT(*) as count
+    FROM billing_operations b
+    LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
+    WHERE COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+    GROUP BY category
     ORDER BY total_cost DESC
   `).all();
   db.close();
-  return rows.map(r => ({ category: r.operation_category, cost: Math.round((r.total_cost || 0) * 100) / 100, count: r.count }));
+  return rows.map(r => ({ category: r.category, cost: Math.round((r.total_cost || 0) * 100) / 100, count: r.count }));
 }
 
 function getProductBreakdown() {
   const db = openDb();
   const rows = db.prepare(`
-    SELECT 
-      IFNULL(pc.offer_id, o.marketplace) as product_id,
-      IFNULL(pc.offer_name, 'Unknown') as product_name,
-      IFNULL(pc.unit_cost, 0) as unit_cost,
-      SUM(o.payment_amount) as total_revenue,
-      COUNT(o.order_id) as order_count
-    FROM orders o
-    LEFT JOIN product_cost pc ON o.order_id = pc.offer_id
-    GROUP BY product_id
-    ORDER BY total_revenue DESC
+    SELECT b.offer_id as product_id, MAX(b.offer_name) as product_name,
+      SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END) as gross_cost,
+      SUM(CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) as cost_credits,
+      COUNT(*) as operation_count
+    FROM billing_operations b
+    LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
+    WHERE b.offer_id IS NOT NULL
+      AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+    GROUP BY b.offer_id
+    ORDER BY gross_cost DESC
     LIMIT 50
   `).all();
   db.close();
   return rows.map(r => ({
     productId: r.product_id,
-    productName: r.product_name,
-    unitCost: r.unit_cost,
-    totalRevenue: Math.round((r.total_revenue || 0) * 100) / 100,
-    orderCount: r.order_count,
-    margin: Math.round(((r.total_revenue - (r.unit_cost * r.order_count)) / (r.total_revenue || 1)) * 10000) / 100
+    productName: r.product_name || 'Nieznana oferta',
+    totalCosts: Math.round(((r.gross_cost || 0) - (r.cost_credits || 0)) * 100) / 100,
+    grossCosts: Math.round((r.gross_cost || 0) * 100) / 100,
+    credits: Math.round((r.cost_credits || 0) * 100) / 100,
+    operationCount: r.operation_count
   }));
 }
 
 function getTrendsData(days = 30) {
   const db = openDb();
+  const safeDays = Math.min(3650, Math.max(1, Math.trunc(Number(days) || 30)));
   const rows = db.prepare(`
-    SELECT 
-      date(o.order_date) as d,
-      SUM(IFNULL(o.payment_amount, 0)) as revenue,
-      COALESCE((SELECT SUM(debit) FROM billing_operations b WHERE date(b.operation_date) = date(o.order_date)), 0) as costs
-    FROM orders o
-    WHERE date(o.order_date) >= date('now', '-${days} days')
-    GROUP BY d
-    ORDER BY d ASC
-  `).all();
+    WITH order_daily AS (
+      SELECT date(order_date) as d,
+        SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) = 'CANCELLED' THEN 0 ELSE IFNULL(payment_amount, 0) END) as revenue
+      FROM orders
+      WHERE date(order_date) IS NOT NULL
+      GROUP BY d
+    ), billing_daily AS (
+      SELECT date(b.operation_date) as d,
+        SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END - CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) as costs
+      FROM billing_operations b
+      LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
+      WHERE date(b.operation_date) IS NOT NULL
+        AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+      GROUP BY d
+    ), all_days AS (
+      SELECT d FROM order_daily UNION SELECT d FROM billing_daily
+    )
+    SELECT all_days.d,
+      IFNULL(order_daily.revenue, 0) as revenue,
+      IFNULL(billing_daily.costs, 0) as costs
+    FROM all_days
+    LEFT JOIN order_daily ON order_daily.d = all_days.d
+    LEFT JOIN billing_daily ON billing_daily.d = all_days.d
+    WHERE all_days.d >= date((SELECT MAX(d) FROM all_days), ?)
+    ORDER BY all_days.d ASC
+  `).all(`-${safeDays} days`);
   db.close();
   return rows.map(r => ({
     date: r.d,
@@ -288,6 +339,63 @@ function getTrendsData(days = 30) {
 module.exports.getCostsBreakdown = getCostsBreakdown;
 module.exports.getProductBreakdown = getProductBreakdown;
 module.exports.getTrendsData = getTrendsData;
+
+function getSourceAnalysis() {
+  const db = openDb();
+  const orders = db.prepare(`
+    SELECT COUNT(*) as total,
+      MIN(date(order_date)) as date_from,
+      MAX(date(order_date)) as date_to,
+      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) = 'CANCELLED' THEN 1 ELSE 0 END) as cancelled,
+      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) <> 'CANCELLED' THEN 1 ELSE 0 END) as active,
+      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) = 'CANCELLED' THEN IFNULL(payment_amount, 0) ELSE 0 END) as cancelled_value,
+      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) <> 'CANCELLED' THEN IFNULL(payment_amount, 0) ELSE 0 END) as active_revenue
+    FROM orders
+  `).get();
+  const returns = db.prepare('SELECT COUNT(*) as line_items, SUM(CASE WHEN returns_quantity > 0 THEN 1 ELSE 0 END) as returned_line_items, SUM(IFNULL(returns_quantity, 0)) as returned_units FROM line_items').get();
+  const billing = db.prepare(`
+    SELECT COUNT(*) as operations,
+      MIN(date(b.operation_date)) as date_from,
+      MAX(date(b.operation_date)) as date_to,
+      SUM(CASE WHEN COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1 AND b.debit < 0 THEN -b.debit ELSE 0 END) as gross_costs,
+      SUM(CASE WHEN COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1 AND b.credit > 0 THEN b.credit ELSE 0 END) as cost_credits,
+      SUM(CASE WHEN b.raw_details LIKE '%Identyfikator zamówienia:%' THEN 1 ELSE 0 END) as order_references,
+      SUM(CASE WHEN b.raw_details LIKE '%Identyfikator zamówienia:%' AND b.related_order_id IS NULL THEN 1 ELSE 0 END) as unmatched_order_references
+    FROM billing_operations b
+    LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
+  `).get();
+  const latestBalance = db.prepare('SELECT balance FROM billing_operations WHERE balance IS NOT NULL ORDER BY operation_date DESC, id DESC LIMIT 1').get();
+  const linkedOrders = db.prepare('SELECT COUNT(DISTINCT related_order_id) as c FROM billing_operations WHERE related_order_id IS NOT NULL').get();
+  db.close();
+  return {
+    orders: {
+      total: orders.total || 0,
+      dateFrom: orders.date_from,
+      dateTo: orders.date_to,
+      active: orders.active || 0,
+      cancelled: orders.cancelled || 0,
+      cancelledValue: Math.round((orders.cancelled_value || 0) * 100) / 100,
+      activeRevenue: Math.round((orders.active_revenue || 0) * 100) / 100,
+      lineItems: returns.line_items || 0,
+      returnedLineItems: returns.returned_line_items || 0,
+      returnedUnits: returns.returned_units || 0
+    },
+    billing: {
+      operations: billing.operations || 0,
+      dateFrom: billing.date_from,
+      dateTo: billing.date_to,
+      orderReferences: billing.order_references || 0,
+      unmatchedOrderReferences: billing.unmatched_order_references || 0,
+      grossCosts: Math.round((billing.gross_costs || 0) * 100) / 100,
+      costCredits: Math.round((billing.cost_credits || 0) * 100) / 100,
+      netCosts: Math.round(((billing.gross_costs || 0) - (billing.cost_credits || 0)) * 100) / 100,
+      balance: latestBalance ? latestBalance.balance : null,
+      linkedOrders: linkedOrders.c || 0
+    }
+  };
+}
+
+module.exports.getSourceAnalysis = getSourceAnalysis;
 
 // Phase 7b: Saved reports
 function saveReport(name, dateFrom, dateTo, metricsSnapshot) {

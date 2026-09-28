@@ -2,7 +2,7 @@ import React from 'react'
 
 export default function MetricCard({ title, value, subtitle, children }: { title: string; value: string | number; subtitle?: string; children?: React.ReactNode }) {
   return (
-    <div className="p-4 bg-white dark:bg-gray-800 rounded shadow flex flex-col">
+    <div className="metric-card p-4 flex flex-col">
       <div className="flex items-center justify-between">
         <div>
           <div className="text-sm text-gray-500">{title}</div>

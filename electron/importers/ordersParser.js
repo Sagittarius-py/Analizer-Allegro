@@ -17,9 +17,8 @@ const splitCsvLine = (line, delimiter = ',') => {
 };
 
 function parseOrdersCsv(text) {
-  const lines = text.split(/\r?\n/);
+  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
   let currentHeaders = null;
-  let currentSection = null;
   const orders = [];
   const lineItems = [];
 
@@ -29,7 +28,6 @@ function parseOrdersCsv(text) {
     if (line.startsWith('Type,')) {
       // new header
       currentHeaders = splitCsvLine(line, ',');
-      currentSection = null;
       continue;
     }
     if (!currentHeaders) continue; // skip until header seen
@@ -41,22 +39,24 @@ function parseOrdersCsv(text) {
     }
     const type = obj['Type'] || '';
     if (type === 'order') {
+      const paymentAmount = Number.parseFloat(obj['PaymentAmount']);
       orders.push({
         type: 'order',
         orderId: obj['OrderId'] || null,
         orderDate: obj['OrderDate'] || null,
         sellerStatus: obj['SellerStatus'] || null,
         marketplace: obj['Marketplace'] || null,
-        paymentAmount: obj['PaymentAmount'] ? parseFloat(obj['PaymentAmount']) : null,
+        paymentAmount: Number.isFinite(paymentAmount) ? paymentAmount : null,
         paymentCurrency: obj['PaymentCurrency'] || null,
         fulfillmentProvider: obj['FulfillmentProvider'] || null,
         raw: obj
       });
     } else if (type === 'lineItem') {
+      const returnsQuantity = Number.parseInt(obj['ReturnsQuantity'], 10);
       lineItems.push({
         type: 'lineItem',
         lineItemId: obj['LineItemId'] || null,
-        returnsQuantity: obj['ReturnsQuantity'] ? parseInt(obj['ReturnsQuantity'], 10) : 0,
+        returnsQuantity: Number.isFinite(returnsQuantity) ? returnsQuantity : 0,
         raw: obj
       });
     }

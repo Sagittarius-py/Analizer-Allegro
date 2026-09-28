@@ -18,7 +18,7 @@ export default function MiniChart({ data = [] as number[] }: { data?: number[] }
   const d = buildPath(data, w, h)
   return (
     <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} xmlns="http://www.w3.org/2000/svg">
-      <path d={d} fill="none" stroke="#4F46E5" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={d} fill="none" stroke="#ff7a1a" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   )
 }

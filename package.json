@@ -4,14 +4,16 @@
   "private": true,
   "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "predev": "electron-rebuild --force --which-module better-sqlite3",
+    "dev": "node scripts/dev.js",
     "dev:vite": "vite",
     "dev:electron": "electron .",
     "dev:electron-db": "cross-env ELECTRON_ENABLE_DB=1 VITE_DEV_SERVER_URL=http://localhost:5174 electron .",
     "build": "vite build && electron-builder",
     "start": "electron .",
     "start:prod": "npm run build && dist/Allegro-Profit-Analyzer.exe",
-    "test": "vitest"
+    "pretest": "npm rebuild better-sqlite3",
+    "test": "vitest run"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
@@ -24,16 +26,16 @@
     "@vitejs/plugin-react": "^4.0.0",
     "autoprefixer": "^10.4.0",
     "concurrently": "^7.6.0",
-    "electron": "^26.0.0",
+    "cross-env": "^7.0.3",
+    "electron": "^44.4.5",
     "electron-builder": "^24.6.4",
     "electron-rebuild": "^3.2.9",
+    "papaparse": "^5.4.1",
     "postcss": "^8.4.0",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.2.0",
     "vite": "^5.0.0",
-    "wait-on": "^7.0.0",
     "vitest": "^1.0.0",
-    "papaparse": "^5.4.1",
-    "cross-env": "^7.0.3"
+    "wait-on": "^7.0.0"
   }
 }

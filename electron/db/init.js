@@ -96,28 +96,24 @@ function initDatabase(app) {
     );
   `);
 
-  // Seed operation_category_map if empty
-  const count = db.prepare('SELECT COUNT(*) as c FROM operation_category_map').get().c;
-  if (!count) {
-    const insert = db.prepare('INSERT INTO operation_category_map (operation_type, category, is_cost) VALUES (?, ?, ?)');
-    const seed = [
-      ['Prowizja od sprzedaży','commission',1],
-      ['Opłata za dostawę DPD Allegro Delivery','delivery',1],
-      ['Opłata dodatkowa za dostawę DPD Allegro Delivery','delivery',1],
-      ['Opłata za dostawę InPost','delivery',1],
-      ['Opłata za dostawę DHL Allegro Delivery','delivery',1],
-      ['Opłata za dostawę ORLEN Paczka Allegro Delivery','delivery',1],
-      ['Opłata za kampanię Ads','advertising',1],
-      ['Opłata za monety','other_fee',1],
-      ['Abonament profesjonalny','subscription',1],
-      ['Pobranie opłat z wpływów','internal',0],
-      ['Podsumowanie miesiąca','internal',0]
-    ];
-    const txn = db.transaction((rows) => {
-      for (const r of rows) insert.run(r[0], r[1], r[2]);
-    });
-    txn(seed);
-  }
+  const insertCategory = db.prepare('INSERT OR IGNORE INTO operation_category_map (operation_type, category, is_cost) VALUES (?, ?, ?)');
+  const seed = [
+    ['Prowizja od sprzedaży','commission',1],
+    ['Opłata za dostawę DPD Allegro Delivery','delivery',1],
+    ['Opłata dodatkowa za dostawę DPD Allegro Delivery','delivery',1],
+    ['Opłata za dostawę InPost','delivery',1],
+    ['Opłata za dostawę DHL Allegro Delivery','delivery',1],
+    ['Opłata za dostawę ORLEN Paczka Allegro Delivery','delivery',1],
+    ['Opłata za kampanię Ads','advertising',1],
+    ['Opłata za monety','other_fee',1],
+    ['Abonament profesjonalny','subscription',1],
+    ['Pobranie opłat z wpływów','internal',0],
+    ['Podsumowanie miesiąca','internal',0]
+  ];
+  const seedCategories = db.transaction((rows) => {
+    for (const row of rows) insertCategory.run(row[0], row[1], row[2]);
+  });
+  seedCategories(seed);
 
   db.close();
   return dbPath;

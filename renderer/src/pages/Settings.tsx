@@ -108,8 +108,9 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="p-4 bg-white dark:bg-gray-800 rounded shadow max-w-3xl">
-      <h2 className="text-xl font-semibold">Ustawienia</h2>
+    <div className="panel p-4 sm:p-5 max-w-3xl">
+      <div className="eyebrow">PREFERENCJE I DANE</div>
+      <h2 className="section-title">Ustawienia</h2>
       <div className="mt-4 grid grid-cols-1 gap-4">
         <div>
           <label className="block text-sm text-gray-600">Domyślna waluta</label>
@@ -150,15 +151,15 @@ export default function SettingsPage() {
         <div className="pt-4 border-t">
           <h3 className="font-medium">Baza danych</h3>
           {dbInfo ? (
-            <div className="mt-2 text-sm text-gray-600">
-              <div>Ścieżka: {dbInfo.path}</div>
-              <div>Rozmiar: {dbInfo.size || '-'} bytes</div>
-              <div>Zamówienia: {dbInfo.orders}</div>
-              <div>Operacje billingowe: {dbInfo.billing_operations}</div>
+            <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+              <div className="preview-stat"><span>Zamówienia</span><strong>{dbInfo.orders ?? 0}</strong></div>
+              <div className="preview-stat"><span>Operacje billing</span><strong>{dbInfo.billing_operations ?? 0}</strong></div>
+              <div className="preview-stat"><span>Rozmiar bazy</span><strong>{dbInfo.size ? `${(dbInfo.size / 1024).toFixed(1)} KB` : '—'}</strong></div>
+              <div className="preview-stat col-span-full"><span>Lokalizacja</span><strong className="break-all">{dbInfo.path}</strong></div>
             </div>
           ) : <div className="text-sm text-gray-500 mt-2">Brak informacji o DB</div>}
           <div className="mt-3">
-            <button onClick={exportDb} className="px-3 py-2 bg-green-600 text-white rounded">Eksportuj kopię DB</button>
+            <button onClick={exportDb} className="px-4 py-2 bg-green-600 text-white rounded">Eksportuj kopię bazy</button>
           </div>
         </div>
       </div>

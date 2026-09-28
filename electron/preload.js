@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('allegroAPI', {
   products: {
     breakdown: () => ipcRenderer.invoke('products:breakdown')
   },
+  analytics: {
+    sourceSummary: () => ipcRenderer.invoke('analytics:sourceSummary')
+  },
   trends: {
     data: (days) => ipcRenderer.invoke('trends:data', days)
   },
@@ -29,8 +32,8 @@ contextBridge.exposeInMainWorld('allegroAPI', {
 });
 
 contextBridge.exposeInMainWorld('allegroImport', {
-  parseAndPreview: (files) => ipcRenderer.invoke('import:parseAndPreview', files),
-  commit: (files) => ipcRenderer.invoke('import:commit', files),
+  parseAndPreview: (files, reportType) => ipcRenderer.invoke('import:parseAndPreview', files, reportType),
+  commit: (files, reportType) => ipcRenderer.invoke('import:commit', files, reportType),
   selectFiles: (defaultPath) => ipcRenderer.invoke('import:selectFiles', { defaultPath }),
 });
 

@@ -14,4 +14,17 @@ describe('billingParser', () => {
     assert.strictEqual(op.extracted_order_value, 660.00);
     assert.strictEqual(op.extracted_order_currency, 'PLN');
   });
+
+  it('normalizes Allegro dates and preserves dot decimals and zero balances', () => {
+    const sample = `\uFEFFData;Nazwa oferty;Identyfikator oferty;Typ operacji;Uznania;Obciążenia;Saldo;Szczegóły operacji
+30.06.2026 23:59;;;Opłata za dostawę DPD Allegro Delivery;;-11,29;0,00;Zamówienie Smart!: Tak, Identyfikator zamówienia: 3b37f900-0000-0000-0000-000000000001, Wartość zamówienia: 660.00, Waluta zamówienia: PLN`;
+    const { operations } = parseBillingCsv(sample);
+    const operation = operations[0];
+
+    assert.strictEqual(operation.operation_date, '2026-06-30 23:59:00');
+    assert.strictEqual(operation.debit, -11.29);
+    assert.strictEqual(operation.balance, 0);
+    assert.strictEqual(operation.extracted_order_value, 660);
+    assert.strictEqual(operation.is_smart_delivery, true);
+  });
 });
