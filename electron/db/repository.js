@@ -108,12 +108,15 @@ function listProducts() {
   const db = openDb();
   const products = db.prepare(`
     SELECT p.offer_id, p.offer_name, p.sku, p.unit_cost, p.sale_price_net, p.purchase_vat_rate, p.sales_vat_rate,
-      p.vat_deductible_percent, p.is_auto_discovered, p.vat_verified, p.currency, p.notes, p.updated_at,
+      p.vat_deductible_percent, p.is_auto_discovered, p.vat_verified, p.is_smart_offer, p.currency, p.notes, p.updated_at,
       fees.gross_fees as seller_fee_debits,
       fees.fee_credits as seller_fee_credits,
       fees.operation_count as seller_fee_operations,
       fees.date_from as seller_fee_date_from,
-      fees.date_to as seller_fee_date_to
+      fees.date_to as seller_fee_date_to,
+      smart.fee_debits as smart_delivery_debits,
+      smart.fee_credits as smart_delivery_credits,
+      smart.operation_count as smart_delivery_operations
     FROM product_cost p
     LEFT JOIN (
       SELECT b.offer_id,
@@ -128,6 +131,17 @@ function listProducts() {
         AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
       GROUP BY b.offer_id
     ) fees ON fees.offer_id = p.offer_id
+    LEFT JOIN (
+      SELECT b.offer_id,
+        SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END) as fee_debits,
+        SUM(CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) as fee_credits,
+        COUNT(*) as operation_count
+      FROM billing_operations b
+        LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
+        WHERE b.offer_id IS NOT NULL AND b.is_smart_delivery = 1
+          AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+      GROUP BY b.offer_id
+    ) smart ON smart.offer_id = p.offer_id
     ORDER BY p.offer_name COLLATE NOCASE, p.offer_id
   `).all();
   db.close();
@@ -144,6 +158,8 @@ function listProducts() {
       sellerFeeOperations: Number(product.seller_fee_operations || 0),
       sellerFeeDateFrom: product.seller_fee_date_from,
       sellerFeeDateTo: product.seller_fee_date_to,
+      smartDeliveryOperations: Number(product.smart_delivery_operations || 0),
+      smartDeliveryFeesNet: Math.round((Number(product.smart_delivery_debits || 0) - Number(product.smart_delivery_credits || 0)) * 100) / 100,
       purchaseVat: purchaseVat == null ? null : Math.round(purchaseVat * 100) / 100,
       nonDeductibleVat: purchaseVat == null ? null : Math.round(purchaseVat * (100 - deductiblePercent) * 100) / 10000,
       grossPurchaseCost: netCost == null || !product.vat_verified ? null : Math.round((netCost + purchaseVat * (100 - deductiblePercent) / 100) * 100) / 100,
@@ -199,6 +215,7 @@ function saveProduct(product) {
   const currency = String(product.currency || 'PLN').trim().toUpperCase();
   const notes = String(product.notes || '').trim() || null;
   const vatVerified = product.vatVerified === true ? 1 : 0;
+  const isSmartOffer = product.isSmartOffer === true ? 1 : 0;
 
   if (!offerId) throw new Error('Podaj identyfikator oferty.');
   if (!offerName) throw new Error('Podaj nazwę produktu.');
@@ -212,8 +229,8 @@ function saveProduct(product) {
   const db = openDb();
   db.prepare(`
     INSERT INTO product_cost
-      (offer_id, offer_name, sku, unit_cost, sale_price_net, purchase_vat_rate, sales_vat_rate, vat_deductible_percent, vat_verified, currency, notes, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (offer_id, offer_name, sku, unit_cost, sale_price_net, purchase_vat_rate, sales_vat_rate, vat_deductible_percent, vat_verified, is_smart_offer, currency, notes, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(offer_id) DO UPDATE SET
       offer_name = excluded.offer_name,
       sku = excluded.sku,
@@ -223,10 +240,11 @@ function saveProduct(product) {
       sales_vat_rate = excluded.sales_vat_rate,
       vat_deductible_percent = excluded.vat_deductible_percent,
       vat_verified = excluded.vat_verified,
+      is_smart_offer = excluded.is_smart_offer,
       currency = excluded.currency,
       notes = excluded.notes,
       updated_at = excluded.updated_at
-  `).run(offerId, offerName, sku, netCost, salePriceNet, purchaseVatRate, salesVatRate, deductiblePercent, vatVerified, currency, notes, new Date().toISOString());
+  `).run(offerId, offerName, sku, netCost, salePriceNet, purchaseVatRate, salesVatRate, deductiblePercent, vatVerified, isSmartOffer, currency, notes, new Date().toISOString());
   db.close();
   return { ok: true, offerId };
 }
@@ -398,7 +416,10 @@ module.exports.deleteSetting = deleteSetting;
 // Orders query helpers
 function listOrders({ limit = 50, offset = 0, q = null } = {}) {
   const db = openDb();
-  let base = 'SELECT order_id, order_date, seller_status, marketplace, payment_amount, payment_currency, fulfillment_provider, import_id FROM orders';
+  let base = `SELECT o.order_id, o.order_date, o.seller_status, o.marketplace, o.payment_amount, o.payment_currency,
+    o.fulfillment_provider, o.import_id,
+    EXISTS (SELECT 1 FROM billing_operations b WHERE b.related_order_id = o.order_id AND b.is_smart_delivery = 1) as is_smart_delivery
+    FROM orders o`;
   const params = [];
   if (q) {
     base += ' WHERE order_id LIKE ? OR marketplace LIKE ? OR fulfillment_provider LIKE ?';
@@ -414,7 +435,11 @@ function listOrders({ limit = 50, offset = 0, q = null } = {}) {
 
 function getOrderDetails(orderId) {
   const db = openDb();
-  const order = db.prepare('SELECT * FROM orders WHERE order_id = ?').get(orderId);
+  const order = db.prepare(`
+    SELECT o.*,
+      EXISTS (SELECT 1 FROM billing_operations b WHERE b.related_order_id = o.order_id AND b.is_smart_delivery = 1) as is_smart_delivery
+    FROM orders o WHERE o.order_id = ?
+  `).get(orderId);
   const billingOperations = db.prepare('SELECT * FROM billing_operations WHERE related_order_id = ? ORDER BY operation_date').all(orderId);
   db.close();
   return { order, billingOperations };

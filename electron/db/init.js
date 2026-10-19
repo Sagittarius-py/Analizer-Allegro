@@ -81,6 +81,7 @@ function initDatabase(app) {
       vat_deductible_percent REAL NOT NULL DEFAULT 100,
       is_auto_discovered INTEGER NOT NULL DEFAULT 0,
       vat_verified INTEGER NOT NULL DEFAULT 0,
+      is_smart_offer INTEGER NOT NULL DEFAULT 0,
       currency TEXT DEFAULT 'PLN',
       notes TEXT,
       updated_at DATETIME
@@ -113,6 +114,7 @@ function initDatabase(app) {
     ['vat_deductible_percent', 'REAL NOT NULL DEFAULT 100'],
     ['is_auto_discovered', 'INTEGER NOT NULL DEFAULT 0'],
     ['vat_verified', 'INTEGER NOT NULL DEFAULT 0'],
+    ['is_smart_offer', 'INTEGER NOT NULL DEFAULT 0'],
     ['notes', 'TEXT']
   ];
   for (const [column, definition] of productMigrations) {

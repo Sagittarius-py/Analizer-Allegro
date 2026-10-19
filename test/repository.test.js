@@ -138,7 +138,7 @@ describe('report import IPC', () => {
     );
   });
 
-  it('saves per-offer cost, purchase VAT, sales VAT, and VAT deductibility through IPC', async () => {
+  it('saves per-offer costs and exposes linked Smart delivery data through IPC', async () => {
     const db = repo.openDb();
     db.prepare('INSERT OR REPLACE INTO product_cost (offer_id, offer_name, unit_cost, currency) VALUES (?, ?, ?, ?)')
       .run('legacy-offer', 'Produkt ze starego katalogu', 12.5, 'PLN');
@@ -154,6 +154,7 @@ describe('report import IPC', () => {
       salesVatRate: '8',
       vatDeductiblePercent: '50',
       vatVerified: true,
+      isSmartOffer: true,
       currency: 'PLN',
       notes: 'Testowy dostawca'
     });
@@ -167,14 +168,31 @@ describe('report import IPC', () => {
     assert.strictEqual(product.nonDeductibleVat, 11.5);
     assert.strictEqual(product.grossPurchaseCost, 111.5);
     assert.strictEqual(product.estimatedGrossPrice, 172.8);
+    assert.strictEqual(product.is_smart_offer, 1);
     assert.strictEqual(legacy.unit_cost, 12.5);
     const productImportId = repo.insertImportRecord({
       fileName: 'product-cost-test.csv', fileType: 'billing', rowCount: 1, fileHash: 'product-cost-test-hash'
     });
-    repo.insertBillingOperations(productImportId, [{
-      operation_date: '2026-06-30 12:00:00', operation_type: 'Prowizja od sprzedaży',
-      offer_id: 'offer-vat-1', offer_name: 'Produkt testowy', debit: -2, credit: 0, balance: null
+    repo.insertOrders(productImportId, [{
+      orderId: 'smart-order-1', orderDate: '2026-06-30 12:00:00', sellerStatus: 'READY_FOR_PROCESSING',
+      marketplace: 'allegro-pl', paymentAmount: 160, paymentCurrency: 'PLN', fulfillmentProvider: 'SELLER'
     }]);
+    repo.insertBillingOperations(productImportId, [
+      {
+        operation_date: '2026-06-30 12:00:00', operation_type: 'Prowizja od sprzedaży',
+        offer_id: 'offer-vat-1', offer_name: 'Produkt testowy', debit: -2, credit: 0, balance: null
+      },
+      {
+        operation_date: '2026-06-30 12:01:00', operation_type: 'Opłata za dostawę InPost',
+        offer_id: 'offer-vat-1', offer_name: 'Produkt testowy', related_order_id: 'smart-order-1',
+        debit: -9.99, credit: 0, balance: null, is_smart_delivery: true
+      }
+    ]);
+    const listedProduct = repo.listProducts().find((item) => item.offer_id === 'offer-vat-1');
+    assert.strictEqual(listedProduct.smartDeliveryOperations, 1);
+    assert.strictEqual(listedProduct.smartDeliveryFeesNet, 9.99);
+    assert.strictEqual(repo.listOrders().find((order) => order.order_id === 'smart-order-1').is_smart_delivery, 1);
+    assert.strictEqual(repo.getOrderDetails('smart-order-1').order.is_smart_delivery, 1);
     const offerAnalysis = repo.getProductBreakdown().find((item) => item.productId === 'offer-vat-1');
     assert.strictEqual(offerAnalysis.purchaseVatRate, 23);
     assert.strictEqual(offerAnalysis.effectivePurchaseUnitCost, 111.5);

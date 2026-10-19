@@ -26,7 +26,6 @@
     ]
   },
   "nsis": {
-    "script": "installer.nsi",
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,

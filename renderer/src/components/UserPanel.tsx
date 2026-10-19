@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { ChartNoAxesCombined, FileInput, LayoutDashboard, PackageSearch, Settings2, WalletCards } from 'lucide-react'
 
 const navigation = [
@@ -19,6 +19,42 @@ type UserPanelProps = {
 }
 
 export default function UserPanel({ page, setPage, mobileOpen, onClose }: UserPanelProps) {
+  const [minimumProfitAmount, setMinimumProfitAmount] = useState(10)
+  const [minimumProfitMarginPercent, setMinimumProfitMarginPercent] = useState(10)
+  const [currency, setCurrency] = useState('PLN')
+
+  useEffect(() => {
+    let active = true
+
+    async function loadMarginRules() {
+      const settings = (window as any).allegroSettings
+      if (!settings?.get) return
+      try {
+        const [amount, margin, defaultCurrency] = await Promise.all([
+          settings.get('minimum_profit_amount'),
+          settings.get('minimum_profit_margin_percent'),
+          settings.get('default_currency')
+        ])
+        if (!active) return
+        if (amount != null && Number.isFinite(Number(amount)) && Number(amount) >= 0) setMinimumProfitAmount(Number(amount))
+        if (margin != null && Number.isFinite(Number(margin)) && Number(margin) >= 0 && Number(margin) < 100) setMinimumProfitMarginPercent(Number(margin))
+        if (typeof defaultCurrency === 'string' && /^[A-Z]{3}$/.test(defaultCurrency)) setCurrency(defaultCurrency)
+      } catch (error) {
+        console.error('Margin rules load failed', error)
+      }
+    }
+
+    loadMarginRules()
+    return () => { active = false }
+  }, [page])
+
+  const formattedMinimumProfit = new Intl.NumberFormat('pl-PL', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(minimumProfitAmount)
+
   return (
     <aside className={`side-panel bg-white border-r ${mobileOpen ? 'side-panel-open' : ''}`} aria-label="Nawigacja główna">
       <div className="p-4">
@@ -44,6 +80,22 @@ export default function UserPanel({ page, setPage, mobileOpen, onClose }: UserPa
             </button>
           ))}
         </nav>
+
+        <section className="margin-rules-summary" aria-labelledby="margin-rules-summary-title">
+          <h2 id="margin-rules-summary-title" className="margin-rules-heading">Zasady marży</h2>
+          <div className="margin-rules-values">
+            <p>Min. kwotowo: <strong>{formattedMinimumProfit}</strong></p>
+            <p>Min. procentowo: <strong>{minimumProfitMarginPercent}%</strong></p>
+          </div>
+          <p className="margin-rules-note">Oba warunki jednocześnie. Zysk przed Ads.</p>
+          <button
+            type="button"
+            onClick={() => { setPage('settings'); onClose() }}
+            className="margin-rules-edit"
+          >
+            Zmień zasady
+          </button>
+        </section>
       </div>
     </aside>
   )

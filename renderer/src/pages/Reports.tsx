@@ -8,6 +8,7 @@ export default function ReportsPage() {
   const [dateTo, setDateTo] = useState('')
   const [saving, setSaving] = useState(false)
   const [selected, setSelected] = useState<any>(null)
+  const [expandedReportId, setExpandedReportId] = useState<number | null>(null)
 
   async function load() {
     try {
@@ -42,6 +43,8 @@ export default function ReportsPage() {
     if (!window.confirm('Usunąć raport?')) return
     try {
       await (window as any).allegroAPI.reports.delete(id)
+      if (selected?.id === id) setSelected(null)
+      if (expandedReportId === id) setExpandedReportId(null)
       await load()
     } catch (err) { console.error(err) }
   }
@@ -50,6 +53,7 @@ export default function ReportsPage() {
     try {
       const r = await (window as any).allegroAPI.reports.get(id)
       setSelected(r)
+      setExpandedReportId(id)
     } catch (err) { console.error(err) }
   }
 
@@ -102,57 +106,34 @@ export default function ReportsPage() {
         <ul className="space-y-2">
           {reports.length === 0 && <li className="text-sm text-gray-500">Brak raportów</li>}
           {reports.map((r: any) => (
-            <li key={r.id} className="report-row flex flex-wrap items-center justify-between gap-3 p-3">
-              <div>
+            <li key={r.id} className="report-row p-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
                 <div className="font-medium">
                   {r.is_pinned ? '📌 ' : ''}{r.name}
                 </div>
                 <div className="text-xs text-gray-600">
                   {r.date_from} → {r.date_to} | {formatLocalDate(r.created_at)}
                 </div>
+                </div>
+                <button type="button" aria-expanded={expandedReportId === r.id} onClick={() => setExpandedReportId((current) => current === r.id ? null : r.id)} className="secondary-action px-3 py-1 text-xs">{expandedReportId === r.id ? 'Ukryj opcje' : 'Opcje raportu'}</button>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => togglePin(r.id, r.is_pinned)}
-                  className="px-3 py-1 text-xs bg-yellow-200 rounded"
-                >
-                  {r.is_pinned ? 'Odepnij' : 'Przypnij'}
-                </button>
-                <button
-                  onClick={() => viewReport(r.id)}
-                  className="px-3 py-1 text-xs bg-blue-400 rounded"
-                >
-                  Podgląd
-                </button>
-                <button
-                  onClick={() => deleteReport(r.id)}
-                  className="px-3 py-1 text-xs bg-red-400 rounded"
-                >
-                  Usuń
-                </button>
-              </div>
+              {expandedReportId === r.id ? <div className="mt-3 border-t pt-3">
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => togglePin(r.id, r.is_pinned)} className="px-3 py-1 text-xs bg-yellow-200 rounded">{r.is_pinned ? 'Odepnij' : 'Przypnij'}</button>
+                  <button onClick={() => selected?.id === r.id ? setSelected(null) : viewReport(r.id)} className="px-3 py-1 text-xs bg-blue-400 rounded">{selected?.id === r.id ? 'Zamknij podgląd' : 'Podgląd'}</button>
+                  <button onClick={() => deleteReport(r.id)} className="px-3 py-1 text-xs bg-red-400 rounded">Usuń</button>
+                </div>
+                {selected?.id === r.id ? <div className="mt-3 text-sm">
+                  <h4 className="font-medium">Raport: {selected.name}</h4>
+                  <div className="mt-2">Okres: {selected.date_from} → {selected.date_to}</div>
+                  <div className="mt-2 max-h-48 overflow-auto rounded bg-gray-100 p-2 text-xs"><pre>{JSON.stringify(selected.metrics_snapshot, null, 2)}</pre></div>
+                </div> : null}
+              </div> : null}
             </li>
           ))}
         </ul>
       </div>
-
-      {selected ? (
-        <div className="panel p-4 sm:p-5">
-          <h3 className="font-medium">Raport: {selected.name}</h3>
-          <div className="mt-3 text-sm">
-            <div>Okres: {selected.date_from} → {selected.date_to}</div>
-            <div className="mt-2 text-xs bg-gray-100 p-2 rounded overflow-auto max-h-48">
-              <pre>{JSON.stringify(selected.metrics_snapshot, null, 2)}</pre>
-            </div>
-          </div>
-          <button
-            onClick={() => setSelected(null)}
-            className="mt-2 px-3 py-1 bg-gray-400 rounded text-sm"
-          >
-            Zamknij
-          </button>
-        </div>
-      ) : null}
     </div>
   )
 }

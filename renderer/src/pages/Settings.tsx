@@ -3,6 +3,11 @@ import React, { useEffect, useState } from 'react'
 export default function SettingsPage() {
   const resetPhrase = 'USUŃ WSZYSTKIE DANE'
   const [defaultCurrency, setDefaultCurrency] = useState('PLN')
+  const [minimumProfitAmount, setMinimumProfitAmount] = useState('10')
+  const [minimumProfitMarginPercent, setMinimumProfitMarginPercent] = useState('10')
+  const [marginError, setMarginError] = useState<string | null>(null)
+  const [marginNotice, setMarginNotice] = useState<string | null>(null)
+  const [savingMarginRules, setSavingMarginRules] = useState(false)
   const [currencyError, setCurrencyError] = useState<string | null>(null)
   const [autoBackup, setAutoBackup] = useState(false)
   const [backupPath, setBackupPath] = useState('')
@@ -20,6 +25,12 @@ export default function SettingsPage() {
     try {
       const c = await (window as any).allegroSettings.get('default_currency')
       if (c) setDefaultCurrency(c)
+    } catch (e) {}
+    try {
+      const amount = await (window as any).allegroSettings.get('minimum_profit_amount')
+      if (amount != null && Number.isFinite(Number(amount))) setMinimumProfitAmount(String(amount))
+      const margin = await (window as any).allegroSettings.get('minimum_profit_margin_percent')
+      if (margin != null && Number.isFinite(Number(margin))) setMinimumProfitMarginPercent(String(margin))
     } catch (e) {}
     try {
       const a = await (window as any).allegroSettings.get('auto_backup')
@@ -67,6 +78,30 @@ export default function SettingsPage() {
     } catch (err) {
       console.error(err)
     } finally { setSaving(false) }
+  }
+
+  async function saveMarginRules() {
+    const amount = Number(minimumProfitAmount)
+    const margin = Number(minimumProfitMarginPercent)
+    if (!Number.isFinite(amount) || amount < 0 || !Number.isFinite(margin) || margin < 0 || margin >= 100) {
+      setMarginError('Zysk musi być nieujemny, a marża musi mieścić się w zakresie od 0% do poniżej 100%.')
+      setMarginNotice(null)
+      return
+    }
+
+    setSavingMarginRules(true)
+    setMarginError(null)
+    setMarginNotice(null)
+    try {
+      const amountResult = await (window as any).allegroSettings.set('minimum_profit_amount', String(amount))
+      const marginResult = await (window as any).allegroSettings.set('minimum_profit_margin_percent', String(margin))
+      if (amountResult?.error || marginResult?.error) throw new Error(amountResult?.error || marginResult?.error)
+      setMarginNotice('Zasady marży zostały zapisane.')
+    } catch (err) {
+      setMarginError(err instanceof Error ? err.message : 'Nie udało się zapisać zasad marży.')
+    } finally {
+      setSavingMarginRules(false)
+    }
   }
 
   function validateCurrency() {
@@ -134,6 +169,10 @@ export default function SettingsPage() {
       if (!result?.ok) throw new Error(result?.error || 'Reset nie powiódł się.')
       setResetBackupPath(result.backupPath)
       setDefaultCurrency('PLN')
+      setMinimumProfitAmount('10')
+      setMinimumProfitMarginPercent('10')
+      setMarginError(null)
+      setMarginNotice(null)
       setAutoBackup(false)
       setBackupPath('')
       setCurrencyError(null)
@@ -158,6 +197,22 @@ export default function SettingsPage() {
           <input value={defaultCurrency} onChange={e => { setDefaultCurrency(e.target.value.toUpperCase()); setCurrencyError(null); }} onBlur={validateCurrency} className="mt-1 p-2 border rounded w-40" />
           {currencyError ? <div className="text-red-500 text-sm mt-1">{currencyError}</div> : null}
         </div>
+
+        <section className="border-t pt-4" aria-labelledby="margin-rules-title">
+          <h3 id="margin-rules-title" className="font-semibold">Zasady marży</h3>
+          <p className="mt-1 text-sm text-gray-500">Cena minimalna musi spełniać oba warunki: wymagany zysk kwotowy i marżę liczoną od ceny sprzedaży netto. Kwota jest stosowana w walucie produktu, bez przeliczenia kursowego. Zysk przed Ads.</p>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="block text-sm text-gray-600">Minimalny zysk przed Ads
+              <input type="number" min="0" step="0.01" value={minimumProfitAmount} onChange={event => { setMinimumProfitAmount(event.target.value); setMarginError(null); setMarginNotice(null) }} className="mt-1 w-full p-2" />
+            </label>
+            <label className="block text-sm text-gray-600">Minimalna marża
+              <div className="mt-1 flex items-center gap-2"><input type="number" min="0" max="99.99" step="0.1" value={minimumProfitMarginPercent} onChange={event => { setMinimumProfitMarginPercent(event.target.value); setMarginError(null); setMarginNotice(null) }} className="w-full p-2" /><span>%</span></div>
+            </label>
+          </div>
+          {marginError ? <div role="alert" className="mt-2 text-sm text-red-300">{marginError}</div> : null}
+          {marginNotice ? <div role="status" className="mt-2 text-sm text-green-300">{marginNotice}</div> : null}
+          <button type="button" onClick={saveMarginRules} disabled={savingMarginRules} className="mt-3 px-3 py-2 bg-blue-600 text-white rounded">{savingMarginRules ? 'Zapisuję…' : 'Zapisz zasady marży'}</button>
+        </section>
 
         <div>
           <label className="flex items-center gap-2">
