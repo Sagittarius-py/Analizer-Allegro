@@ -8,12 +8,14 @@
   "files": [
     "dist/**/*",
     "electron/**/*",
+    "assets/icon.png",
     "package.json"
   ],
   "asarUnpack": [
     "**/*.node"
   ],
   "win": {
+    "icon": "assets/icon.ico",
     "signAndEditExecutable": false,
     "target": [
       "nsis",
@@ -27,6 +29,9 @@
   },
   "nsis": {
     "oneClick": false,
+    "installerIcon": "assets/icon.ico",
+    "uninstallerIcon": "assets/icon.ico",
+    "installerHeaderIcon": "assets/icon.ico",
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "createStartMenuShortcut": true,
