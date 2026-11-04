@@ -70,11 +70,11 @@ export default function OrdersPage() {
                   <td className="p-2 text-sm">{o.order_id}</td>
                   <td className="p-2 text-sm">{formatLocalDate(o.order_date)}</td>
                   <td className="p-2 text-sm">{o.payment_amount == null ? '—' : `${Number(o.payment_amount).toFixed(2)} ${o.payment_currency || 'PLN'}`}</td>
-                  <td className="p-2 text-sm">{o.is_smart_delivery ? <span className="status-pill status-pill-success">SMART</span> : '—'}</td>
+                  <td className="p-2 text-sm">{o.is_smart_delivery ? <span className="smart-badge" title="Zamówienie z dostawą Allegro Smart!">Smart!</span> : <span className="text-gray-500">Standardowa</span>}</td>
                   <td className="p-2 text-sm"><span className={`status-pill ${o.seller_status === 'CANCELLED' ? 'status-pill-error' : ''}`}>{translateOrderStatus(o.seller_status)}</span></td>
                   <td className="p-2 text-sm"><button aria-expanded={expandedOrderId === o.order_id} onClick={() => toggleDetails(o.order_id)} className="secondary-action px-3 py-1">{expandedOrderId === o.order_id ? 'Ukryj' : 'Szczegóły'}</button></td>
                 </tr>
-                {expandedOrderId === o.order_id ? <tr><td colSpan={6} className="p-3">
+                {expandedOrderId === o.order_id ? <tr><td colSpan={6} className="order-details-cell">
                   <section className="rounded border p-4">
                     <h3 className="font-semibold">Szczegóły zamówienia {o.order_id}</h3>
                     {detailsLoading && !selected ? <p className="mt-3 text-sm text-gray-500">Wczytywanie szczegółów…</p> : null}
@@ -82,7 +82,7 @@ export default function OrdersPage() {
                       <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
                         <div className="preview-stat"><span>Status</span><strong>{translateOrderStatus(selected.order?.seller_status)}</strong></div>
                         <div className="preview-stat"><span>Kwota</span><strong>{selected.order?.payment_amount == null ? '—' : `${Number(selected.order.payment_amount).toFixed(2)} ${selected.order.payment_currency || 'PLN'}`}</strong></div>
-                        <div className="preview-stat"><span>Dostawa</span><strong>{selected.order?.is_smart_delivery ? 'SMART' : 'Standardowa / brak danych'}</strong></div>
+                        <div className="preview-stat"><span>Dostawa</span><strong>{selected.order?.is_smart_delivery ? <span className="smart-badge">Smart!</span> : 'Standardowa / brak danych'}</strong></div>
                         <div className="preview-stat"><span>Operacje rozliczeniowe</span><strong>{selected.billingOperations?.length || 0}</strong></div>
                       </div>
                       {selected.financials ? <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
@@ -91,16 +91,17 @@ export default function OrdersPage() {
                         <div className="preview-stat"><span>Przesyłki (numery nadania)</span><strong>{selected.financials.shipments}</strong></div>
                         <div className="preview-stat"><span>Prowizja / kwota płatności</span><strong>{selected.financials.effectiveCommissionPercent == null ? '—' : `${selected.financials.effectiveCommissionPercent.toFixed(2)}%`}</strong></div>
                       </div> : null}
-                      {selected.financials?.smart ? <div className="mt-3 rounded border p-3 text-sm">
+                      {selected.financials?.smart ? <div className="smart-panel mt-3 rounded border p-3 text-sm">
+                        <div className="smart-panel-title"><span className="smart-badge">Smart!</span><span>Opłaty za dostawę Smart! w tym zamówieniu</span></div>
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
                           <div className="preview-stat"><span>Opłata Smart! naliczona</span><strong>{selected.financials.smart.charged.toFixed(2)} PLN</strong></div>
                           <div className="preview-stat"><span>Zwrot opłaty Smart!</span><strong>{selected.financials.smart.refunded.toFixed(2)} PLN</strong></div>
                           <div className="preview-stat"><span>Wg cennika konta zwykłego</span><strong>{selected.financials.smart.expectedStandardAccountFee == null ? 'Brak progu / brak danych' : `${selected.financials.smart.expectedStandardAccountFee.toFixed(2)} PLN`}</strong></div>
-                          <div className="preview-stat"><span>Różnica do cennika</span><strong>{selected.financials.smart.differenceToStandardAccount == null ? '—' : `${selected.financials.smart.differenceToStandardAccount.toFixed(2)} PLN`}</strong></div>
+                          <div className="preview-stat"><span>Różnica do cennika</span><strong className={selected.financials.smart.differenceToStandardAccount === 0 ? 'smart-diff-ok' : selected.financials.smart.differenceToStandardAccount == null ? '' : 'smart-diff-off'}>{selected.financials.smart.differenceToStandardAccount == null ? '—' : `${selected.financials.smart.differenceToStandardAccount.toFixed(2)} PLN`}</strong></div>
                         </div>
                         <p className="mt-2 text-xs text-gray-500">Cennik konta zwykłego (według pomocy Allegro): 30–44,99 zł → 1,59 zł; 45–64,99 zł → 3,19 zł; 65–99,99 zł → 5,19 zł; 100–149,99 zł → 7,89 zł; od 150 zł → 9,99 zł. Od 150 zł kolejne przesyłki kosztują 7,89 zł. Konto firmowe ma inne warunki, a nie uwzględniono pobrania (+4,99 zł), bo raporty nie podają formy płatności. Zwrot opłaty obejmuje tylko opłatę podstawową, bez usług dodatkowych.</p>
                       </div> : null}
-                      {selected.billingOperations?.length ? <ul className="mt-3 divide-y divide-gray-700">{selected.billingOperations.map((operation: any) => <li key={operation.id} className="flex flex-wrap justify-between gap-2 py-2 text-sm"><span className="flex items-center gap-2">{operation.operation_type}{operation.is_smart_delivery ? <span className="status-pill status-pill-success">SMART</span> : null}</span><span>{(Number(operation.credit || 0) + Number(operation.debit || 0)).toFixed(2)} PLN</span></li>)}</ul> : <p className="mt-3 text-sm text-gray-500">Brak powiązanych operacji rozliczeniowych.</p>}
+                      {selected.billingOperations?.length ? <ul className="mt-3 divide-y divide-gray-700">{selected.billingOperations.map((operation: any) => <li key={operation.id} className="flex flex-wrap justify-between gap-2 py-2 text-sm"><span className="flex items-center gap-2">{operation.operation_type}{operation.is_smart_delivery ? <span className="smart-badge">Smart!</span> : null}</span><span>{(Number(operation.credit || 0) + Number(operation.debit || 0)).toFixed(2)} PLN</span></li>)}</ul> : <p className="mt-3 text-sm text-gray-500">Brak powiązanych operacji rozliczeniowych.</p>}
                     </> : null}
                   </section>
                 </td></tr> : null}
