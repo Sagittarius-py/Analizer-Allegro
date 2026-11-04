@@ -253,6 +253,7 @@ export default function ProductsPage() {
             <input type="checkbox" checked={form.isSmartOffer} onChange={(event) => updateField('isSmartOffer', event.target.checked)} />
             <span>Oferta korzysta z dostawy SMART</span>
           </label>
+          <p className="text-xs text-gray-500">Warunki oznaczenia Smart! dla konta zwykłego (według pomocy Allegro): jakość sprzedaży wyższa niż Neutralny (lub co najmniej Neutralny na wszystkich kontach), brak zaległości w rozliczeniach, metoda Paczkomaty InPost z ceną wysyłki do 10,95 zł oraz ustawione warunki zwrotów z adresem w Polsce. Oznaczenia nie mają ogłoszenia ani oferty z kategorii: fajerwerki, mleka modyfikowane początkowe i leki weterynaryjne bez recepty. Aplikacja nie weryfikuje tych warunków — to ręczne oznaczenie.</p>
 
           <label className="field-label block">Notatki
             <textarea rows={2} value={form.notes} onChange={(event) => updateField('notes', event.target.value)} placeholder="Dostawca, wariant, daty obowiązywania kosztu…" className="mt-1 w-full p-2" />

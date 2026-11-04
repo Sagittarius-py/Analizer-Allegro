@@ -3,6 +3,7 @@ const fs = require('fs');
 const Database = require('better-sqlite3');
 const { initDatabase } = require('./init');
 const { app } = require('electron');
+const { expectedSmartFee } = require('../smartFees');
 
 const round2 = (value) => Math.round(value * 100) / 100;
 
@@ -466,7 +467,28 @@ function summarizeOrderFinancials(order, billingOperations) {
     deliveryCost: costOf('delivery'),
     shipments: waybills.size,
     // Ratio to the payment amount, which can include delivery paid by the buyer.
-    effectiveCommissionPercent: hasCommission && paymentAmount > 0 ? round2(commissionCost / paymentAmount * 100) : null
+    effectiveCommissionPercent: hasCommission && paymentAmount > 0 ? round2(commissionCost / paymentAmount * 100) : null,
+    smart: summarizeSmartDelivery(order, paymentAmount, billingOperations)
+  };
+}
+
+// Smart! delivery fees billed for the order versus the standard-account tier table from Allegro's help.
+// "Opłata dodatkowa" operations are additional services, which the Smart! refund does not cover.
+function summarizeSmartDelivery(order, paymentAmount, billingOperations) {
+  if (!order.is_smart_delivery) return null;
+  const baseOperations = billingOperations.filter((operation) =>
+    operation.is_smart_delivery && operation.operation_category === 'delivery' && !/^Opłata dodatkowa/i.test(operation.operation_type || ''));
+  const chargedOperations = baseOperations.filter((operation) => Number(operation.debit) < 0);
+  const charged = round2(-chargedOperations.reduce((sum, operation) => sum + Number(operation.debit), 0));
+  const refunded = round2(baseOperations.reduce((sum, operation) => sum + Math.max(0, Number(operation.credit || 0)), 0));
+  const shipments = new Set(chargedOperations.map((operation) => operation.waybill_number).filter(Boolean)).size || chargedOperations.length;
+  const expected = paymentAmount == null || shipments === 0 ? null : expectedSmartFee(paymentAmount, shipments);
+  return {
+    charged,
+    refunded,
+    shipments,
+    expectedStandardAccountFee: expected,
+    differenceToStandardAccount: expected == null ? null : round2(charged - expected)
   };
 }
 

@@ -198,7 +198,8 @@ describe('report import IPC', () => {
     assert.strictEqual(repo.listOrders().find((order) => order.order_id === 'smart-order-1').is_smart_delivery, 1);
     assert.strictEqual(repo.getOrderDetails('smart-order-1').order.is_smart_delivery, 1);
     assert.deepStrictEqual(repo.getOrderDetails('smart-order-1').financials, {
-      paymentAmount: 160, commissionCost: 9.6, deliveryCost: 9.99, shipments: 1, effectiveCommissionPercent: 6
+      paymentAmount: 160, commissionCost: 9.6, deliveryCost: 9.99, shipments: 1, effectiveCommissionPercent: 6,
+      smart: { charged: 9.99, refunded: 0, shipments: 1, expectedStandardAccountFee: 9.99, differenceToStandardAccount: 0 }
     });
     const offerAnalysis = repo.getProductBreakdown().find((item) => item.productId === 'offer-vat-1');
     assert.strictEqual(offerAnalysis.purchaseVatRate, 23);

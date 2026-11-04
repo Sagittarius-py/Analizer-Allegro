@@ -88,6 +88,34 @@ Według materiałów Allegro prowizja procentowa jest liczona od ceny towaru plu
 
 Wskaźnik **prowizja / kwota płatności** to zwykły iloraz tych dwóch liczb z raportów. Kwota płatności w raporcie zamówień może zawierać dostawę opłaconą przez kupującego, a raport nie rozdziela jej od ceny towaru, więc wskaźnik jest orientacyjny i nie musi odpowiadać stawce prowizji z cennika Allegro. Z tego samego powodu **przychód** na Pulpicie i w trendach jest sumą kwot płatności zamówień (bez anulowanych), a nie samej wartości towarów.
 
+### Allegro Smart! — opłaty za dostawę
+
+Dla zamówień Smart! (operacje z `Zamówienie Smart!: Tak`) w szczegółach zamówienia pojawia się panel z:
+
+- **opłatą Smart! naliczoną** — suma obciążeń za dostawę (bez operacji „Opłata dodatkowa…”, które są usługami dodatkowymi),
+- **zwrotem opłaty Smart!** — uznania na tych operacjach (Allegro zwraca opłatę za przesyłkę, gdy klient zwróci zakup formularzem zwrotu lub nie odbierze paczki; zwrot obejmuje tylko opłatę podstawową),
+- **opłatą wg cennika konta zwykłego** i **różnicą** do tego, co naliczono.
+
+Cennik konta zwykłego według pomocy Allegro, zależny od wartości zamówienia:
+
+| Wartość zamówienia | Opłata za przesyłkę |
+|---|---|
+| 30,00–44,99 zł | 1,59 zł |
+| 45,00–64,99 zł | 3,19 zł |
+| 65,00–99,99 zł | 5,19 zł |
+| 100,00–149,99 zł | 7,89 zł |
+| od 150,00 zł | 9,99 zł |
+
+Zamówienie z kilkoma przesyłkami: poniżej 150 zł każda przesyłka kosztuje tyle samo; od 150 zł pierwsza kosztuje 9,99 zł, a każda kolejna 7,89 zł. Liczba przesyłek to liczba unikalnych numerów nadania. Wartość zamówienia przyjmujemy z kwoty płatności w raporcie zamówień.
+
+Uwagi dotyczące porównania:
+
+- Panel jest **orientacyjny**. Konto firmowe ma inne warunki, a zamówienia wysłane innymi metodami niż w cenniku mogą mieć inne stawki — wtedy różnica będzie różna od zera. To nie oznacza błędu w aplikacji ani w rozliczeniu.
+- Przy płatności przy odbiorze Allegro doliczy 4,99 zł za pobranie, ale raporty nie zawierają formy płatności, więc aplikacja tego nie uwzględnia.
+- Dla zamówień poniżej 30 zł cennik nie podaje opłaty, więc panel pokazuje „Brak progu / brak danych”.
+
+Warunki uzyskania oznaczenia Smart! w ofercie (konto zwykłe): jakość sprzedaży wyższa niż Neutralny (lub co najmniej Neutralny na wszystkich kontach), brak zaległości w rozliczeniach z Allegro, metoda Paczkomaty InPost z ceną wysyłki do 10,95 zł oraz ustawione warunki zwrotów z adresem w Polsce. Oznaczenia nie mają ogłoszenia ani oferty w kategoriach: fajerwerki, mleka modyfikowane początkowe i leki weterynaryjne bez recepty. Aplikacja **nie sprawdza** tych warunków; pole „Oferta korzysta z dostawy SMART” w produktach jest ustawiane ręcznie.
+
 ## Produkty i VAT
 
 Katalog ofert (produktów) używany do liczenia marży:
