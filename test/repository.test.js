@@ -27,7 +27,7 @@ afterAll(() => fs.rmSync(dataRoot, { recursive: true, force: true }));
 
 describe('report import IPC', () => {
   it('previews and commits the project reports independently, then analyzes their actual records', async () => {
-    const reportsPath = path.join(__dirname, '..', 'Raports');
+    const reportsPath = path.join(__dirname, '..', '..', 'Raports');
     const billingText = fs.readFileSync(path.join(reportsPath, 'allegro-billing-2026-09-22.csv'), 'utf8');
     const ordersText = fs.readFileSync(path.join(reportsPath, '2026-09-22-22_30_09.csv'), 'utf8');
     const billing = parseBillingCsv(billingText);
@@ -185,7 +185,11 @@ describe('report import IPC', () => {
       {
         operation_date: '2026-06-30 12:01:00', operation_type: 'Opłata za dostawę InPost',
         offer_id: 'offer-vat-1', offer_name: 'Produkt testowy', related_order_id: 'smart-order-1',
-        debit: -9.99, credit: 0, balance: null, is_smart_delivery: true
+        debit: -9.99, credit: 0, balance: null, is_smart_delivery: true, waybill_number: 'WB-1'
+      },
+      {
+        operation_date: '2026-06-30 12:02:00', operation_type: 'Prowizja od sprzedaży',
+        offer_name: 'Produkt testowy', related_order_id: 'smart-order-1', debit: -9.6, credit: 0, balance: null
       }
     ]);
     const listedProduct = repo.listProducts().find((item) => item.offer_id === 'offer-vat-1');
@@ -193,6 +197,9 @@ describe('report import IPC', () => {
     assert.strictEqual(listedProduct.smartDeliveryFeesNet, 9.99);
     assert.strictEqual(repo.listOrders().find((order) => order.order_id === 'smart-order-1').is_smart_delivery, 1);
     assert.strictEqual(repo.getOrderDetails('smart-order-1').order.is_smart_delivery, 1);
+    assert.deepStrictEqual(repo.getOrderDetails('smart-order-1').financials, {
+      paymentAmount: 160, commissionCost: 9.6, deliveryCost: 9.99, shipments: 1, effectiveCommissionPercent: 6
+    });
     const offerAnalysis = repo.getProductBreakdown().find((item) => item.productId === 'offer-vat-1');
     assert.strictEqual(offerAnalysis.purchaseVatRate, 23);
     assert.strictEqual(offerAnalysis.effectivePurchaseUnitCost, 111.5);

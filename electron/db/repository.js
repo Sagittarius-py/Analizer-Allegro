@@ -4,6 +4,8 @@ const Database = require('better-sqlite3');
 const { initDatabase } = require('./init');
 const { app } = require('electron');
 
+const round2 = (value) => Math.round(value * 100) / 100;
+
 function getDbPath() {
   const userData = app.getPath('userData');
   const folder = path.join(userData, 'allegro-profit-analyzer');
@@ -442,7 +444,30 @@ function getOrderDetails(orderId) {
   `).get(orderId);
   const billingOperations = db.prepare('SELECT * FROM billing_operations WHERE related_order_id = ? ORDER BY operation_date').all(orderId);
   db.close();
-  return { order, billingOperations };
+  return { order, billingOperations, financials: summarizeOrderFinancials(order, billingOperations) };
+}
+
+// Sums what Allegro actually billed for one order. Debits are stored as negative numbers,
+// so a cost is -(credit + debit) and a refund (credit) reduces it.
+function summarizeOrderFinancials(order, billingOperations) {
+  if (!order) return null;
+  const costOf = (category) => round2(-billingOperations
+    .filter((operation) => operation.operation_category === category)
+    .reduce((sum, operation) => sum + Number(operation.credit || 0) + Number(operation.debit || 0), 0));
+  const hasCommission = billingOperations.some((operation) => operation.operation_category === 'commission');
+  const paymentAmount = order.payment_amount == null ? null : Number(order.payment_amount);
+  const commissionCost = costOf('commission');
+  const waybills = new Set(billingOperations
+    .filter((operation) => operation.operation_category === 'delivery' && operation.waybill_number)
+    .map((operation) => operation.waybill_number));
+  return {
+    paymentAmount,
+    commissionCost,
+    deliveryCost: costOf('delivery'),
+    shipments: waybills.size,
+    // Ratio to the payment amount, which can include delivery paid by the buyer.
+    effectiveCommissionPercent: hasCommission && paymentAmount > 0 ? round2(commissionCost / paymentAmount * 100) : null
+  };
 }
 
 module.exports.listOrders = listOrders;

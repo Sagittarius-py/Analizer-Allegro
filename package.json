@@ -11,6 +11,7 @@
     "dev:electron-db": "cross-env ELECTRON_ENABLE_DB=1 VITE_DEV_SERVER_URL=http://localhost:5174 electron .",
     "build": "vite build && electron-builder",
     "start": "electron .",
+    "uruchom": "npm --ignore-scripts run dev",
     "start:prod": "npm run build && dist/Allegro-Profit-Analyzer.exe",
     "pretest": "npm rebuild better-sqlite3",
     "test": "vitest run"

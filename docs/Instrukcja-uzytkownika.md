@@ -77,7 +77,16 @@ Przycisk **„Odśwież dane”** ponownie pobiera wszystkie dane z bazy (przyda
 - Tabela wszystkich zaimportowanych zamówień: ID, data, kwota, status (przetłumaczony na polski, anulowane wyróżnione kolorem).
 - Wyszukiwarka po ID zamówienia, rynku (marketplace) lub dostawcy realizacji.
 - Stronicowanie (50 zamówień na stronę, przyciski „Poprzednia”/„Następna”).
-- Kliknięcie **„Szczegóły”** pokazuje dane zamówienia oraz wszystkie powiązane operacje rozliczeniowe (prowizje, dostawa itd.) z tego raportu rozliczeń, które udało się dopasować po identyfikatorze zamówienia.
+- Kliknięcie **„Szczegóły”** pokazuje dane zamówienia oraz wszystkie powiązane operacje rozliczeniowe (prowizje, dostawa itd.) z tego raportu rozliczeń, które udało się dopasować po identyfikatorze zamówienia. Kwota przy każdej operacji to uznanie minus obciążenie: koszt jest ujemny, zwrot opłaty dodatni.
+- W szczegółach widać też podsumowanie kwot rzeczywiście naliczonych przez Allegro dla tego zamówienia: **prowizja**, **opłaty za dostawę** (obie netto, czyli po odjęciu ewentualnych zwrotów), liczba **przesyłek** (unikalne numery nadania) oraz **prowizja / kwota płatności** w procentach.
+
+### Jak czytać prowizję
+
+Aplikacja **nie wylicza prowizji ani opłat Smart! samodzielnie** — pokazuje kwoty, które Allegro naliczyło w raporcie rozliczeń. Stawki zależą od kategorii oferty, rodzaju konta i dostawy, mogą mieć część procentową i stałą kwotę oraz mogą się zmieniać, więc aplikacja nie przyjmuje żadnych założeń o ich wysokości.
+
+Według materiałów Allegro prowizja procentowa jest liczona od ceny towaru plus kosztu dostawy opłacanego przez kupującego (np. 6% od 100 zł towaru i 18 zł dostawy to 7,08 zł). Przy dostawie Smart! dostawa jest dla kupującego bezpłatna, więc prowizja obejmuje tylko towar. Przy kilku przedmiotach w jednej transakcji koszt dostawy jest dzielony na przedmioty, a prowizja liczona osobno dla każdego.
+
+Wskaźnik **prowizja / kwota płatności** to zwykły iloraz tych dwóch liczb z raportów. Kwota płatności w raporcie zamówień może zawierać dostawę opłaconą przez kupującego, a raport nie rozdziela jej od ceny towaru, więc wskaźnik jest orientacyjny i nie musi odpowiadać stawce prowizji z cennika Allegro. Z tego samego powodu **przychód** na Pulpicie i w trendach jest sumą kwot płatności zamówień (bez anulowanych), a nie samej wartości towarów.
 
 ## Produkty i VAT
 

@@ -85,7 +85,13 @@ export default function OrdersPage() {
                         <div className="preview-stat"><span>Dostawa</span><strong>{selected.order?.is_smart_delivery ? 'SMART' : 'Standardowa / brak danych'}</strong></div>
                         <div className="preview-stat"><span>Operacje rozliczeniowe</span><strong>{selected.billingOperations?.length || 0}</strong></div>
                       </div>
-                      {selected.billingOperations?.length ? <ul className="mt-3 divide-y divide-gray-700">{selected.billingOperations.map((operation: any) => <li key={operation.id} className="flex flex-wrap justify-between gap-2 py-2 text-sm"><span className="flex items-center gap-2">{operation.operation_type}{operation.is_smart_delivery ? <span className="status-pill status-pill-success">SMART</span> : null}</span><span>{Number(operation.credit || 0) - Number(operation.debit || 0)} PLN</span></li>)}</ul> : <p className="mt-3 text-sm text-gray-500">Brak powiązanych operacji rozliczeniowych.</p>}
+                      {selected.financials ? <div className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="preview-stat"><span>Prowizja (netto z rozliczeń)</span><strong>{selected.financials.commissionCost.toFixed(2)} PLN</strong></div>
+                        <div className="preview-stat"><span>Opłaty za dostawę (netto z rozliczeń)</span><strong>{selected.financials.deliveryCost.toFixed(2)} PLN</strong></div>
+                        <div className="preview-stat"><span>Przesyłki (numery nadania)</span><strong>{selected.financials.shipments}</strong></div>
+                        <div className="preview-stat"><span>Prowizja / kwota płatności</span><strong>{selected.financials.effectiveCommissionPercent == null ? '—' : `${selected.financials.effectiveCommissionPercent.toFixed(2)}%`}</strong></div>
+                      </div> : null}
+                      {selected.billingOperations?.length ? <ul className="mt-3 divide-y divide-gray-700">{selected.billingOperations.map((operation: any) => <li key={operation.id} className="flex flex-wrap justify-between gap-2 py-2 text-sm"><span className="flex items-center gap-2">{operation.operation_type}{operation.is_smart_delivery ? <span className="status-pill status-pill-success">SMART</span> : null}</span><span>{(Number(operation.credit || 0) + Number(operation.debit || 0)).toFixed(2)} PLN</span></li>)}</ul> : <p className="mt-3 text-sm text-gray-500">Brak powiązanych operacji rozliczeniowych.</p>}
                     </> : null}
                   </section>
                 </td></tr> : null}

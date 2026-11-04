@@ -36,7 +36,7 @@ renderer/
     utils/localization.ts formatowanie dat i tłumaczenia statusów/kategorii na PL
 scripts/
   dev.js                 własny orchestrator trybu dev (patrz niżej)
-test/                    testy Vitest dla parserów, detekcji typu i repository
+test/                    testy Vitest dla parserów, detekcji typu i repository (repository.test.js czyta raporty z katalogu ../Raports, położonego obok katalogu projektu)
 docs/
   Instrukcja-uzytkownika.md  dokumentacja końcowego użytkownika
 ```
