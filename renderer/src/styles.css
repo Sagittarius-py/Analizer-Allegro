@@ -889,11 +889,20 @@ svg path {
 	display: flex;
 	flex-wrap: wrap;
 	align-items: center;
+	justify-content: space-between;
 	gap: 8px;
 	margin-bottom: 10px;
 	color: var(--ink);
 	font-size: 13px;
 	font-weight: 700;
+}
+
+.smart-panel-title svg {
+	transition: color 0.2s ease;
+}
+
+.smart-panel-title svg:hover {
+	color: var(--signal) !important;
 }
 
 .smart-diff-ok {

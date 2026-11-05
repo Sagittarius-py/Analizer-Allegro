@@ -5,6 +5,12 @@ export default function SettingsPage() {
   const [defaultCurrency, setDefaultCurrency] = useState('PLN')
   const [minimumProfitAmount, setMinimumProfitAmount] = useState('10')
   const [minimumProfitMarginPercent, setMinimumProfitMarginPercent] = useState('10')
+  const [defaultPurchaseVatRate, setDefaultPurchaseVatRate] = useState('23')
+  const [defaultSalesVatRate, setDefaultSalesVatRate] = useState('23')
+  const [defaultVatDeductiblePercent, setDefaultVatDeductiblePercent] = useState('100')
+  const [productDefaultsError, setProductDefaultsError] = useState<string | null>(null)
+  const [productDefaultsNotice, setProductDefaultsNotice] = useState<string | null>(null)
+  const [savingProductDefaults, setSavingProductDefaults] = useState(false)
   const [marginError, setMarginError] = useState<string | null>(null)
   const [marginNotice, setMarginNotice] = useState<string | null>(null)
   const [savingMarginRules, setSavingMarginRules] = useState(false)
@@ -32,6 +38,18 @@ export default function SettingsPage() {
       const margin = await (window as any).allegroSettings.get('minimum_profit_margin_percent')
       if (margin != null && Number.isFinite(Number(margin))) setMinimumProfitMarginPercent(String(margin))
     } catch (e) {}
+    try {
+      const [purchaseVat, salesVat, deductible] = await Promise.all([
+        (window as any).allegroSettings.get('default_purchase_vat_rate'),
+        (window as any).allegroSettings.get('default_sales_vat_rate'),
+        (window as any).allegroSettings.get('default_vat_deductible_percent')
+      ])
+      if (purchaseVat != null && Number.isFinite(Number(purchaseVat)) && Number(purchaseVat) >= 0 && Number(purchaseVat) <= 100) setDefaultPurchaseVatRate(String(purchaseVat))
+      if (salesVat != null && Number.isFinite(Number(salesVat)) && Number(salesVat) >= 0 && Number(salesVat) <= 100) setDefaultSalesVatRate(String(salesVat))
+      if (deductible != null && Number.isFinite(Number(deductible)) && Number(deductible) >= 0 && Number(deductible) <= 100) setDefaultVatDeductiblePercent(String(deductible))
+    } catch (e) {
+      console.error('Product VAT defaults load failed', e)
+    }
     try {
       const a = await (window as any).allegroSettings.get('auto_backup')
       setAutoBackup(!!a)
@@ -104,6 +122,35 @@ export default function SettingsPage() {
     }
   }
 
+  async function saveProductDefaults() {
+    const purchaseVat = Number(defaultPurchaseVatRate)
+    const salesVat = Number(defaultSalesVatRate)
+    const deductible = Number(defaultVatDeductiblePercent)
+    if ([purchaseVat, salesVat, deductible].some((value) => !Number.isFinite(value) || value < 0 || value > 100)) {
+      setProductDefaultsError('Stawki VAT i procent odliczenia muszą mieścić się w zakresie 0–100%.')
+      setProductDefaultsNotice(null)
+      return
+    }
+
+    setSavingProductDefaults(true)
+    setProductDefaultsError(null)
+    setProductDefaultsNotice(null)
+    try {
+      const results = await Promise.all([
+        (window as any).allegroSettings.set('default_purchase_vat_rate', String(purchaseVat)),
+        (window as any).allegroSettings.set('default_sales_vat_rate', String(salesVat)),
+        (window as any).allegroSettings.set('default_vat_deductible_percent', String(deductible))
+      ])
+      const failed = results.find((result: any) => result?.error)
+      if (failed) throw new Error(failed.error)
+      setProductDefaultsNotice('Domyślne wartości VAT zostały zapisane. Nowe oferty z importu dostaną te stawki, ale VAT nadal wymaga potwierdzenia.')
+    } catch (err) {
+      setProductDefaultsError(err instanceof Error ? err.message : 'Nie udało się zapisać domyślnych wartości VAT.')
+    } finally {
+      setSavingProductDefaults(false)
+    }
+  }
+
   function validateCurrency() {
     if (!defaultCurrency || !/^[A-Z]{3}$/.test(defaultCurrency.trim())) {
       setCurrencyError('Użyj 3-literowego kodu waluty (np. PLN)')
@@ -171,8 +218,13 @@ export default function SettingsPage() {
       setDefaultCurrency('PLN')
       setMinimumProfitAmount('10')
       setMinimumProfitMarginPercent('10')
+      setDefaultPurchaseVatRate('23')
+      setDefaultSalesVatRate('23')
+      setDefaultVatDeductiblePercent('100')
       setMarginError(null)
       setMarginNotice(null)
+      setProductDefaultsError(null)
+      setProductDefaultsNotice(null)
       setAutoBackup(false)
       setBackupPath('')
       setCurrencyError(null)
@@ -212,6 +264,25 @@ export default function SettingsPage() {
           {marginError ? <div role="alert" className="mt-2 text-sm text-red-300">{marginError}</div> : null}
           {marginNotice ? <div role="status" className="mt-2 text-sm text-green-300">{marginNotice}</div> : null}
           <button type="button" onClick={saveMarginRules} disabled={savingMarginRules} className="mt-3 px-3 py-2 bg-blue-600 text-white rounded">{savingMarginRules ? 'Zapisuję…' : 'Zapisz zasady marży'}</button>
+        </section>
+
+        <section className="border-t pt-4" aria-labelledby="product-vat-defaults-title">
+          <h3 id="product-vat-defaults-title" className="font-semibold">Domyślne wartości produktów</h3>
+          <p className="mt-1 text-sm text-gray-500">Dla raportowanych pontonów, materacy i dmuchanych zabawek przyjmujemy standardowe 23% VAT. Potwierdź stawkę na fakturze i dla konkretnego towaru. Domyślne 100% odliczenia jest tylko propozycją dla podatnika VAT i zakupów związanych ze sprzedażą opodatkowaną — nie stosuj go automatycznie, jeśli warunki odliczenia nie są spełnione.</p>
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <label className="block text-sm text-gray-600">Domyślny VAT zakupu
+              <div className="mt-1 flex items-center gap-2"><input type="number" min="0" max="100" step="0.01" value={defaultPurchaseVatRate} onChange={(event) => { setDefaultPurchaseVatRate(event.target.value); setProductDefaultsError(null); setProductDefaultsNotice(null) }} className="w-full p-2" /><span>%</span></div>
+            </label>
+            <label className="block text-sm text-gray-600">Domyślny VAT sprzedaży
+              <div className="mt-1 flex items-center gap-2"><input type="number" min="0" max="100" step="0.01" value={defaultSalesVatRate} onChange={(event) => { setDefaultSalesVatRate(event.target.value); setProductDefaultsError(null); setProductDefaultsNotice(null) }} className="w-full p-2" /><span>%</span></div>
+            </label>
+            <label className="block text-sm text-gray-600">Domyślne odliczenie VAT zakupu
+              <div className="mt-1 flex items-center gap-2"><input type="number" min="0" max="100" step="1" value={defaultVatDeductiblePercent} onChange={(event) => { setDefaultVatDeductiblePercent(event.target.value); setProductDefaultsError(null); setProductDefaultsNotice(null) }} className="w-full p-2" /><span>%</span></div>
+            </label>
+          </div>
+          {productDefaultsError ? <div role="alert" className="mt-2 text-sm text-red-300">{productDefaultsError}</div> : null}
+          {productDefaultsNotice ? <div role="status" className="mt-2 text-sm text-green-300">{productDefaultsNotice}</div> : null}
+          <button type="button" onClick={saveProductDefaults} disabled={savingProductDefaults} className="mt-3 px-3 py-2 bg-blue-600 text-white rounded">{savingProductDefaults ? 'Zapisuję…' : 'Zapisz domyślne wartości produktów'}</button>
         </section>
 
         <div>

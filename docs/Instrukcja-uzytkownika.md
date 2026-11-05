@@ -74,10 +74,12 @@ Przycisk **„Odśwież dane”** ponownie pobiera wszystkie dane z bazy (przyda
 
 ## Zamówienia
 
-- Tabela wszystkich zaimportowanych zamówień: ID, data, kwota, status (przetłumaczony na polski, anulowane wyróżnione kolorem).
+- Tabela wszystkich zaimportowanych zamówień: ID, data, kwota po odjęciu powiązanych kosztów Allegro, status (przetłumaczony na polski, anulowane wyróżnione kolorem). Podstawowa kwota i suma rozpoznanych kosztów są widoczne pod wynikiem i po najechaniu na niego.
 - Wyszukiwarka po ID zamówienia, rynku (marketplace) lub dostawcy realizacji.
 - Stronicowanie (50 zamówień na stronę, przyciski „Poprzednia”/„Następna”).
 - Kliknięcie **„Szczegóły”** pokazuje dane zamówienia oraz wszystkie powiązane operacje rozliczeniowe (prowizje, dostawa itd.) z tego raportu rozliczeń, które udało się dopasować po identyfikatorze zamówienia. Kwota przy każdej operacji to uznanie minus obciążenie: koszt jest ujemny, zwrot opłaty dodatni.
+- Jeśli operacje zawierają ID oferty, szczegóły pokazują oferty występujące w rozliczeniach tego zamówienia oraz przypisane do nich prowizje, dostawę i pozostałe opłaty. To powiązanie pochodzi z raportu rozliczeń; nie jest pełną listą pozycji sprzedaży i nie zawiera ilości ani ceny każdej pozycji. Opłaty dostawy bez ID oferty pozostają widoczne na poziomie zamówienia, ale nie są przypisywane do konkretnego produktu.
+- Kwota na liście jest tylko kwotą płatności pomniejszoną o rozpoznane, powiązane koszty Allegro. Nie uwzględnia kosztu zakupu produktu ani opłat, których nie dało się przypisać do zamówienia, więc nie jest zyskiem.
 - W szczegółach widać też podsumowanie kwot rzeczywiście naliczonych przez Allegro dla tego zamówienia: **prowizja**, **opłaty za dostawę** (obie netto, czyli po odjęciu ewentualnych zwrotów), liczba **przesyłek** (unikalne numery nadania) oraz **prowizja / kwota płatności** w procentach.
 
 ### Jak czytać prowizję
@@ -122,7 +124,10 @@ Katalog ofert (produktów) używany do liczenia marży:
 
 - Produkty pojawiają się tu **automatycznie** po imporcie raportu rozliczeń (na podstawie nazwy i ID oferty), ale bez kosztu zakupu — trzeba go uzupełnić ręcznie.
 - Formularz pozwala ustawić dla każdej oferty: ID oferty, nazwę, SKU, koszt zakupu netto, cenę sprzedaży netto, stawkę VAT zakupu i sprzedaży, procent odliczenia VAT, walutę i notatki.
+- Ustawienia pozwalają określić domyślną walutę oraz domyślne stawki VAT zakupu/sprzedaży i procent odliczenia. Są one wstępnie wypełniane w nowych produktach i ofertach wykrytych w imporcie; same w sobie **nie potwierdzają** prawidłowości stawki ani prawa do odliczenia.
 - Po zaznaczeniu **„VAT zweryfikowany”** aplikacja przelicza automatycznie koszt zakupu brutto oraz szacowaną cenę sprzedaży brutto.
+- W katalogu widać liczbę zamówień, z którymi powiązano operacje danej oferty. Szczegóły produktu pokazują sumę opłat Allegro z zaimportowanych rozliczeń oraz zakres dat tych operacji; jest to suma historyczna, nie koszt jednostkowy.
+- Pokazywany zysk i marża są szacunkiem opartym na cenie sprzedaży i koszcie zakupu. Nie odejmują opłat Allegro ani Ads, dlatego zielony/czerwony status nie jest potwierdzeniem faktycznego zysku netto. Nowo wykryte oferty wymagają uzupełnienia kosztu zakupu i danych sprzedażowych.
 - Wyszukiwarka filtruje po nazwie, ID oferty lub SKU.
 - Możliwość edycji i usunięcia produktu z katalogu (usunięcie nie usuwa historycznych operacji rozliczeniowych, tylko wpis kosztowy).
 

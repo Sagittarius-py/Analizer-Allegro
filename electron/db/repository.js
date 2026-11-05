@@ -119,7 +119,8 @@ function listProducts() {
       fees.date_to as seller_fee_date_to,
       smart.fee_debits as smart_delivery_debits,
       smart.fee_credits as smart_delivery_credits,
-      smart.operation_count as smart_delivery_operations
+      smart.operation_count as smart_delivery_operations,
+      linked.linked_orders
     FROM product_cost p
     LEFT JOIN (
       SELECT b.offer_id,
@@ -145,6 +146,14 @@ function listProducts() {
           AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
       GROUP BY b.offer_id
     ) smart ON smart.offer_id = p.offer_id
+    LEFT JOIN (
+      SELECT b.offer_id, COUNT(DISTINCT b.related_order_id) as linked_orders
+      FROM billing_operations b
+      LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
+      WHERE b.offer_id IS NOT NULL AND b.related_order_id IS NOT NULL
+        AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+      GROUP BY b.offer_id
+    ) linked ON linked.offer_id = p.offer_id
     ORDER BY p.offer_name COLLATE NOCASE, p.offer_id
   `).all();
   db.close();
@@ -163,6 +172,7 @@ function listProducts() {
       sellerFeeDateTo: product.seller_fee_date_to,
       smartDeliveryOperations: Number(product.smart_delivery_operations || 0),
       smartDeliveryFeesNet: Math.round((Number(product.smart_delivery_debits || 0) - Number(product.smart_delivery_credits || 0)) * 100) / 100,
+      linkedOrders: Number(product.linked_orders || 0),
       purchaseVat: purchaseVat == null ? null : Math.round(purchaseVat * 100) / 100,
       nonDeductibleVat: purchaseVat == null ? null : Math.round(purchaseVat * (100 - deductiblePercent) * 100) / 10000,
       grossPurchaseCost: netCost == null || !product.vat_verified ? null : Math.round((netCost + purchaseVat * (100 - deductiblePercent) / 100) * 100) / 100,
@@ -183,10 +193,22 @@ function ensureProductsFromBillingOperations(operations = []) {
   if (!offers.size) return 0;
 
   const db = openDb();
+  const defaultSetting = db.prepare('SELECT value FROM app_settings WHERE key = ?');
+  const readDefault = (key, fallback, min, max) => {
+    const stored = defaultSetting.get(key);
+    const value = stored ? Number(tryParse(stored.value)) : fallback;
+    return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+  };
+  const purchaseVatRate = readDefault('default_purchase_vat_rate', 23, 0, 100);
+  const salesVatRate = readDefault('default_sales_vat_rate', 23, 0, 100);
+  const deductiblePercent = readDefault('default_vat_deductible_percent', 100, 0, 100);
+  const currencySetting = defaultSetting.get('default_currency');
+  const configuredCurrency = currencySetting ? String(tryParse(currencySetting.value) || '').toUpperCase() : 'PLN';
+  const defaultCurrency = /^[A-Z]{3}$/.test(configuredCurrency) ? configuredCurrency : 'PLN';
   const insert = db.prepare(`
     INSERT OR IGNORE INTO product_cost
       (offer_id, offer_name, unit_cost, purchase_vat_rate, sales_vat_rate, vat_deductible_percent, currency, is_auto_discovered, vat_verified, updated_at)
-    VALUES (?, ?, NULL, 0, 0, 0, 'PLN', 1, 0, ?)
+    VALUES (?, ?, NULL, ?, ?, ?, ?, 1, 0, ?)
   `);
   const fillName = db.prepare(`
     UPDATE product_cost SET offer_name = ?
@@ -196,7 +218,7 @@ function ensureProductsFromBillingOperations(operations = []) {
   const discoverOffers = db.transaction(() => {
     let discovered = 0;
     for (const [offerId, offerName] of offers) {
-      if (insert.run(offerId, offerName, now).changes) discovered += 1;
+      if (insert.run(offerId, offerName, purchaseVatRate, salesVatRate, deductiblePercent, defaultCurrency, now).changes) discovered += 1;
       else fillName.run(offerName, offerId);
     }
     return discovered;
@@ -389,6 +411,19 @@ function setSetting(key, value) {
   const now = new Date().toISOString();
   const up = db.prepare('INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at');
   up.run(key, typeof value === 'string' ? value : JSON.stringify(value), now);
+  const defaultColumns = {
+    default_purchase_vat_rate: 'purchase_vat_rate',
+    default_sales_vat_rate: 'sales_vat_rate',
+    default_vat_deductible_percent: 'vat_deductible_percent'
+  };
+  const column = defaultColumns[key];
+  if (column) {
+    const numericValue = Number(value);
+    if (Number.isFinite(numericValue) && numericValue >= 0 && numericValue <= 100) {
+      db.prepare(`UPDATE product_cost SET ${column} = ? WHERE is_auto_discovered = 1 AND vat_verified = 0 AND ${column} = 0`)
+        .run(numericValue);
+    }
+  }
   db.close();
 }
 
@@ -421,19 +456,75 @@ function listOrders({ limit = 50, offset = 0, q = null } = {}) {
   const db = openDb();
   let base = `SELECT o.order_id, o.order_date, o.seller_status, o.marketplace, o.payment_amount, o.payment_currency,
     o.fulfillment_provider, o.import_id,
-    EXISTS (SELECT 1 FROM billing_operations b WHERE b.related_order_id = o.order_id AND b.is_smart_delivery = 1) as is_smart_delivery
-    FROM orders o`;
+    EXISTS (SELECT 1 FROM billing_operations b WHERE b.related_order_id = o.order_id AND b.is_smart_delivery = 1) as is_smart_delivery,
+    IFNULL(SUM(CASE
+      WHEN COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+      THEN CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END - CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END
+      ELSE 0
+    END), 0) as total_costs,
+    IFNULL(SUM(CASE WHEN COALESCE(b.operation_category, m.category) = 'commission' THEN -(IFNULL(b.credit, 0) + IFNULL(b.debit, 0)) ELSE 0 END), 0) as commission_cost,
+    IFNULL(SUM(CASE WHEN COALESCE(b.operation_category, m.category) = 'delivery' THEN -(IFNULL(b.credit, 0) + IFNULL(b.debit, 0)) ELSE 0 END), 0) as delivery_cost
+    FROM orders o
+    LEFT JOIN billing_operations b ON b.related_order_id = o.order_id
+    LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type`;
   const params = [];
   if (q) {
-    base += ' WHERE order_id LIKE ? OR marketplace LIKE ? OR fulfillment_provider LIKE ?';
+    base += ' WHERE o.order_id LIKE ? OR o.marketplace LIKE ? OR o.fulfillment_provider LIKE ?';
     const like = `%${q}%`;
     params.push(like, like, like);
   }
-  base += ' ORDER BY order_date DESC LIMIT ? OFFSET ?';
+  base += ' GROUP BY o.order_id ORDER BY o.order_date DESC LIMIT ? OFFSET ?';
   params.push(limit, offset);
   const rows = db.prepare(base).all(...params);
   db.close();
-  return rows;
+  return rows.map(row => ({
+    ...row,
+    total_costs: Math.round((row.total_costs || 0) * 100) / 100,
+    commission_cost: Math.round((row.commission_cost || 0) * 100) / 100,
+    delivery_cost: Math.round((row.delivery_cost || 0) * 100) / 100,
+    amount_after_linked_costs: row.payment_amount == null || (row.payment_currency && row.payment_currency !== 'PLN')
+      ? null
+      : Math.round((row.payment_amount - (row.total_costs || 0)) * 100) / 100
+  }));
+}
+
+function summarizeOrderOffers(billingOperations) {
+  const offers = new Map();
+  for (const operation of billingOperations) {
+    if (!operation.offer_id) continue;
+    const offerId = String(operation.offer_id);
+    let offer = offers.get(offerId);
+    if (!offer) {
+      offer = {
+        offerId,
+        offerName: operation.offer_name || 'Nieznana oferta',
+        operationCount: 0,
+        costOperationCount: 0,
+        commissionCost: 0,
+        deliveryCost: 0,
+        otherCosts: 0,
+        totalCosts: 0
+      };
+      offers.set(offerId, offer);
+    }
+    offer.operationCount += 1;
+    if (operation.operation_category === 'internal') continue;
+    const hasCost = Number(operation.debit || 0) < 0 || Number(operation.credit || 0) > 0;
+    if (!hasCost) continue;
+    const cost = -(Number(operation.credit || 0) + Number(operation.debit || 0));
+    offer.costOperationCount += 1;
+    offer.totalCosts += cost;
+    if (operation.operation_category === 'commission') offer.commissionCost += cost;
+    else if (operation.operation_category === 'delivery') offer.deliveryCost += cost;
+    else offer.otherCosts += cost;
+  }
+  return [...offers.values()].map((offer) => ({
+    ...offer,
+    commissionCost: round2(offer.commissionCost),
+    deliveryCost: round2(offer.deliveryCost),
+    otherCosts: round2(offer.otherCosts),
+    totalCosts: round2(offer.totalCosts)
+  }));
 }
 
 function getOrderDetails(orderId) {
@@ -445,7 +536,12 @@ function getOrderDetails(orderId) {
   `).get(orderId);
   const billingOperations = db.prepare('SELECT * FROM billing_operations WHERE related_order_id = ? ORDER BY operation_date').all(orderId);
   db.close();
-  return { order, billingOperations, financials: summarizeOrderFinancials(order, billingOperations) };
+  return {
+    order,
+    billingOperations,
+    offerSummaries: summarizeOrderOffers(billingOperations),
+    financials: summarizeOrderFinancials(order, billingOperations)
+  };
 }
 
 // Sums what Allegro actually billed for one order. Debits are stored as negative numbers,

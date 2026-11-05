@@ -61,11 +61,23 @@ describe('report import IPC', () => {
     const autoProducts = (await ipcHandlers.get('products:list')()).filter((product) => product.is_auto_discovered);
     assert.strictEqual(autoProducts.length, uniqueBillingOffers.size);
     assert.ok(autoProducts.every((product) => product.unit_cost === null && product.vat_verified === 0));
+    assert.ok(autoProducts.every((product) =>
+      product.purchase_vat_rate === 23 &&
+      product.sales_vat_rate === 23 &&
+      product.vat_deductible_percent === 100
+    ));
     for (const product of autoProducts) {
       assert.strictEqual(product.offer_name, uniqueBillingOffers.get(product.offer_id));
       assert.strictEqual(product.purchaseVat, null);
       assert.strictEqual(product.grossPurchaseCost, null);
     }
+    const defaultVatDb = repo.openDb();
+    defaultVatDb.prepare('UPDATE product_cost SET sales_vat_rate = 0 WHERE offer_id = ? AND vat_verified = 0')
+      .run(autoProducts[0].offer_id);
+    defaultVatDb.close();
+    repo.setSetting('default_sales_vat_rate', '8');
+    assert.strictEqual(repo.listProducts().find((product) => product.offer_id === autoProducts[0].offer_id).sales_vat_rate, 8);
+    repo.setSetting('default_sales_vat_rate', '23');
     const offerFees = autoProducts.find((product) => product.offer_id === autoProducts[0].offer_id);
     const categoryDb = repo.openDb();
     const feeTypes = new Set(categoryDb.prepare('SELECT operation_type FROM operation_category_map WHERE is_cost = 1').all().map((row) => row.operation_type));
@@ -110,6 +122,17 @@ describe('report import IPC', () => {
     assert.strictEqual(ordersResult[0].insertedOrders, orders.orders.length);
     assert.strictEqual(ordersResult[0].insertedLineItems, orders.lineItems.length);
     assert.ok(ordersResult[0].linkedBillingOperations > 0);
+
+    const multiOfferOrder = repo.getOrderDetails('70040f50-739d-11f1-8f66-573ba9b2f744');
+    assert.deepStrictEqual(
+      multiOfferOrder.offerSummaries.map((offer) => offer.offerId).sort(),
+      ['18445612999', '18445657296']
+    );
+    assert.strictEqual(multiOfferOrder.offerSummaries.find((offer) => offer.offerId === '18445657296').totalCosts, 87.81);
+    assert.strictEqual(multiOfferOrder.offerSummaries.find((offer) => offer.offerId === '18445612999').totalCosts, 9.11);
+
+    const linkedOffer = (await ipcHandlers.get('products:list')()).find((product) => product.offer_id === '18445657296');
+    assert.ok(linkedOffer.linkedOrders > 0);
 
     const expectedRevenue = orders.orders
       .filter((order) => order.sellerStatus !== 'CANCELLED')
@@ -196,7 +219,13 @@ describe('report import IPC', () => {
     assert.strictEqual(listedProduct.smartDeliveryOperations, 1);
     assert.strictEqual(listedProduct.smartDeliveryFeesNet, 9.99);
     assert.strictEqual(repo.listOrders().find((order) => order.order_id === 'smart-order-1').is_smart_delivery, 1);
+    assert.strictEqual(repo.listOrders().find((order) => order.order_id === 'smart-order-1').amount_after_linked_costs, 140.41);
     assert.strictEqual(repo.getOrderDetails('smart-order-1').order.is_smart_delivery, 1);
+    assert.deepStrictEqual(repo.getOrderDetails('smart-order-1').offerSummaries.map((offer) => ({
+      offerId: offer.offerId,
+      deliveryCost: offer.deliveryCost,
+      totalCosts: offer.totalCosts
+    })), [{ offerId: 'offer-vat-1', deliveryCost: 9.99, totalCosts: 9.99 }]);
     assert.deepStrictEqual(repo.getOrderDetails('smart-order-1').financials, {
       paymentAmount: 160, commissionCost: 9.6, deliveryCost: 9.99, shipments: 1, effectiveCommissionPercent: 6,
       smart: { charged: 9.99, refunded: 0, shipments: 1, expectedStandardAccountFee: 9.99, differenceToStandardAccount: 0 }

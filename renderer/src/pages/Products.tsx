@@ -28,6 +28,7 @@ type Product = {
   sellerFeeDateTo: string | null
   smartDeliveryOperations: number
   smartDeliveryFeesNet: number
+  linkedOrders: number
 }
 
 type ProductForm = {
@@ -45,19 +46,35 @@ type ProductForm = {
   notes: string
 }
 
-const emptyForm: ProductForm = {
-  offerId: '',
-  offerName: '',
-  sku: '',
-  netPurchaseCost: '',
-  netSalePrice: '',
+type ProductDefaults = {
+  purchaseVatRate: string
+  salesVatRate: string
+  vatDeductiblePercent: string
+  currency: string
+}
+
+const initialProductDefaults: ProductDefaults = {
   purchaseVatRate: '23',
   salesVatRate: '23',
   vatDeductiblePercent: '100',
-  vatVerified: false,
-  isSmartOffer: false,
-  currency: 'PLN',
-  notes: ''
+  currency: 'PLN'
+}
+
+function createEmptyForm(defaults: ProductDefaults): ProductForm {
+  return {
+    offerId: '',
+    offerName: '',
+    sku: '',
+    netPurchaseCost: '',
+    netSalePrice: '',
+    purchaseVatRate: defaults.purchaseVatRate,
+    salesVatRate: defaults.salesVatRate,
+    vatDeductiblePercent: defaults.vatDeductiblePercent,
+    vatVerified: false,
+    isSmartOffer: false,
+    currency: defaults.currency,
+    notes: ''
+  }
 }
 
 const money = (value: number | null | undefined, currency = 'PLN') => value == null
@@ -68,9 +85,10 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [minimumProfitAmount, setMinimumProfitAmount] = useState(10)
   const [minimumProfitMarginPercent, setMinimumProfitMarginPercent] = useState(10)
+  const [productDefaults, setProductDefaults] = useState<ProductDefaults>(initialProductDefaults)
   const [expandedOptionsId, setExpandedOptionsId] = useState<string | null>(null)
   const [showNewProductForm, setShowNewProductForm] = useState(false)
-  const [form, setForm] = useState<ProductForm>(emptyForm)
+  const [form, setForm] = useState<ProductForm>(() => createEmptyForm(initialProductDefaults))
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -96,14 +114,36 @@ export default function ProductsPage() {
     try {
       const settings = (window as any).allegroSettings
       if (!settings?.get) return
-      const [amount, margin] = await Promise.all([
+      const [amount, margin, purchaseVatRate, salesVatRate, vatDeductiblePercent, currency] = await Promise.all([
         settings.get('minimum_profit_amount'),
-        settings.get('minimum_profit_margin_percent')
+        settings.get('minimum_profit_margin_percent'),
+        settings.get('default_purchase_vat_rate'),
+        settings.get('default_sales_vat_rate'),
+        settings.get('default_vat_deductible_percent'),
+        settings.get('default_currency')
       ])
       if (amount != null && Number.isFinite(Number(amount)) && Number(amount) >= 0) setMinimumProfitAmount(Number(amount))
       if (margin != null && Number.isFinite(Number(margin)) && Number(margin) >= 0 && Number(margin) < 100) setMinimumProfitMarginPercent(Number(margin))
+      const nextDefaults = {
+        purchaseVatRate: purchaseVatRate != null && Number.isFinite(Number(purchaseVatRate)) && Number(purchaseVatRate) >= 0 && Number(purchaseVatRate) <= 100
+          ? String(purchaseVatRate)
+          : initialProductDefaults.purchaseVatRate,
+        salesVatRate: salesVatRate != null && Number.isFinite(Number(salesVatRate)) && Number(salesVatRate) >= 0 && Number(salesVatRate) <= 100
+          ? String(salesVatRate)
+          : initialProductDefaults.salesVatRate,
+        vatDeductiblePercent: vatDeductiblePercent != null && Number.isFinite(Number(vatDeductiblePercent)) && Number(vatDeductiblePercent) >= 0 && Number(vatDeductiblePercent) <= 100
+          ? String(vatDeductiblePercent)
+          : initialProductDefaults.vatDeductiblePercent,
+        currency: currency && /^[A-Z]{3}$/.test(String(currency).toUpperCase())
+          ? String(currency).toUpperCase()
+          : initialProductDefaults.currency
+      }
+      setProductDefaults(nextDefaults)
+      setForm((current) => current.offerId || current.offerName || current.netPurchaseCost
+        ? current
+        : createEmptyForm(nextDefaults))
     } catch (err) {
-      console.error('Margin rules load failed', err)
+      console.error('Product defaults load failed', err)
     }
   }
 
@@ -123,7 +163,7 @@ export default function ProductsPage() {
     setEditing(false)
     setExpandedOptionsId(null)
     setShowNewProductForm(true)
-    setForm(emptyForm)
+    setForm(createEmptyForm(productDefaults))
     setError(null)
     setNotice(null)
   }
@@ -132,7 +172,7 @@ export default function ProductsPage() {
     setEditing(false)
     setExpandedOptionsId(null)
     setShowNewProductForm(false)
-    setForm(emptyForm)
+    setForm(createEmptyForm(productDefaults))
     setError(null)
     setNotice(null)
   }
@@ -168,7 +208,7 @@ export default function ProductsPage() {
       const result = await (window as any).allegroAPI.products.save(form)
       if (!result?.ok) throw new Error(result?.error || 'Nie udało się zapisać produktu.')
       setNotice(editing ? 'Dane produktu zostały zaktualizowane.' : 'Produkt został dodany do katalogu.')
-      setForm(emptyForm)
+      setForm(createEmptyForm(productDefaults))
       setEditing(false)
       setExpandedOptionsId(null)
       setShowNewProductForm(false)
@@ -300,14 +340,14 @@ export default function ProductsPage() {
 
       <section className="product-catalog panel flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex flex-wrap items-end justify-between gap-3 p-4 sm:p-5">
-          <div><h3 className="font-semibold">Katalog produktów</h3><p className="mt-1 text-xs text-gray-500">{products.length} produktów · {products.filter((product) => product.unit_cost == null || !product.vat_verified).length} wymaga uzupełnienia</p><p className="mt-1 text-xs text-gray-500">Progi: {minimumProfitAmount.toFixed(2)} w walucie produktu i {minimumProfitMarginPercent}% marży, oba warunki jednocześnie. Wynik jest przed opłatami Allegro i Ads.</p></div>
+          <div><h3 className="font-semibold">Katalog produktów</h3><p className="mt-1 text-xs text-gray-500">{products.length} produktów · {products.filter((product) => product.unit_cost == null || !product.vat_verified).length} wymaga uzupełnienia</p><p className="mt-1 text-xs text-gray-500">Progi: {minimumProfitAmount.toFixed(2)} w walucie produktu i {minimumProfitMarginPercent}% marży, oba warunki jednocześnie.</p><p className="mt-1 text-xs text-gray-500">Zysk i marża są szacunkiem przed opłatami Allegro i Ads; rzeczywiste opłaty z raportów sprawdzisz w szczegółach produktu.</p></div>
           <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Szukaj: nazwa, ID oferty lub SKU" aria-label="Szukaj w katalogu produktów" className="w-full p-2 sm:w-80" />
         </div>
         <div
           className="table-scroll min-h-0 flex-1 overflow-auto"
         >
           <table className="w-full table-fixed text-left text-xs">
-            <thead><tr><th className="w-[42%] p-2">Produkt</th><th className="w-[25%] p-2">Zysk / marża</th><th className="w-[18%] p-2">Sprzedaż brutto</th><th className="w-[15%] p-2">Szczegóły</th></tr></thead>
+            <thead><tr><th className="w-[42%] p-2">Produkt</th><th className="w-[25%] p-2">Szacowany zysk / marża</th><th className="w-[18%] p-2">Sprzedaż brutto</th><th className="w-[15%] p-2">Szczegóły</th></tr></thead>
             <tbody>
               {loading && <tr><td colSpan={4} className="table-empty">Wczytywanie katalogu…</td></tr>}
               {!loading && filteredProducts.length === 0 && <tr><td colSpan={4} className="table-empty">{products.length ? 'Brak produktów pasujących do wyszukiwania.' : 'Katalog jest pusty. Zaimportuj rozliczenia lub dodaj produkt powyżej.'}</td></tr>}
@@ -329,7 +369,7 @@ export default function ProductsPage() {
                   <td className="min-w-0 p-2">
                     <strong className="block whitespace-normal break-words leading-snug" title={product.offer_name}>{product.offer_name}</strong>
                     <span className="block text-gray-500">SKU: {product.sku || '—'}</span>
-                    <div className="mt-1 flex flex-wrap gap-1">{product.is_auto_discovered ? <span className="status-pill status-pill-accent">Z raportu</span> : null}{product.unit_cost == null ? <span className="status-pill status-pill-error">Brak kosztu</span> : null}{!product.vat_verified ? <span className="status-pill status-pill-error">VAT?</span> : null}{product.smartDeliveryOperations ? <span className="status-pill status-pill-success">SMART</span> : null}</div>
+                    <div className="mt-1 flex flex-wrap gap-1">{product.is_auto_discovered ? <span className="status-pill status-pill-accent">Z raportu</span> : null}{product.unit_cost == null ? <span className="status-pill status-pill-error">Brak kosztu</span> : null}{!product.vat_verified ? <span className="status-pill status-pill-error">VAT?</span> : null}{product.smartDeliveryOperations ? <span className="status-pill status-pill-success">SMART</span> : null}{product.linkedOrders ? <span className="status-pill">{product.linkedOrders} zam. z opłatami oferty</span> : null}</div>
                   </td>
                   <td className="p-2">
                     {estimatedProfit == null || estimatedMarginPercent == null
@@ -355,9 +395,10 @@ export default function ProductsPage() {
                         <div><span className="text-gray-500">Oferta SMART</span><strong className="block">{product.is_smart_offer ? 'Tak' : 'Nie'}</strong></div>
                         <div><span className="text-gray-500">Minimalna cena netto</span><strong className="block">{money(minimumSalePrice?.net, product.currency)}</strong></div>
                         <div><span className="text-gray-500">Minimalna cena brutto</span><strong className="block">{money(minimumSalePrice?.gross, product.currency)}</strong></div>
-                        <div><span className="text-gray-500">Opłaty Allegro netto</span><strong className="block">{product.sellerFeeOperations ? money(product.sellerFeesNet, product.currency) : '—'}</strong></div>
-                        <div><span className="text-gray-500">Obciążenia / korekty</span><strong className="block">{money(product.sellerFeeDebits, product.currency)} / {money(product.sellerFeeCredits, product.currency)}</strong></div>
-                        <div><span className="text-gray-500">SMART / dostawa · rozliczenia</span><strong className="block">{product.smartDeliveryOperations ? `${money(product.smartDeliveryFeesNet, product.currency)} · ${product.smartDeliveryOperations} operacji` : 'Brak danych'}</strong></div>
+                        <div><span className="text-gray-500">Opłaty Allegro netto · suma z raportów</span><strong className="block">{product.sellerFeeOperations ? money(product.sellerFeesNet, 'PLN') : '—'}</strong></div>
+                        <div><span className="text-gray-500">Obciążenia / korekty</span><strong className="block">{money(product.sellerFeeDebits, 'PLN')} / {money(product.sellerFeeCredits, 'PLN')}</strong></div>
+                        <div><span className="text-gray-500">SMART / dostawa · rozliczenia</span><strong className="block">{product.smartDeliveryOperations ? `${money(product.smartDeliveryFeesNet, 'PLN')} · ${product.smartDeliveryOperations} operacji` : 'Brak danych'}</strong></div>
+                        <div><span className="text-gray-500">Zamówienia z kosztami tej oferty</span><strong className="block">{product.linkedOrders}</strong></div>
                         <div><span className="text-gray-500">Okres opłat</span><strong className="block">{product.sellerFeeDateFrom || '—'} – {product.sellerFeeDateTo || '—'}</strong></div>
                         <div><span className="text-gray-500">Wynik / marża</span><strong className="block">{estimatedProfit == null || estimatedMarginPercent == null ? 'Uzupełnij dane' : `${money(estimatedProfit, product.currency)} · ${estimatedMarginPercent.toFixed(1)}%`}</strong></div>
                       </div>
