@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { calculateMinimumSalePrice } from '../utils/pricing'
+import SortableTableHeader from '../components/SortableTableHeader'
+import { calculateMinimumSalePrice, calculateSuggestedSalePriceFromNetPurchase } from '../utils/pricing'
+import { sortRows, type SortDirection } from '../utils/tableSorting'
 
 type Product = {
   offer_id: string
@@ -86,8 +88,14 @@ export default function ProductsPage() {
   const [minimumProfitAmount, setMinimumProfitAmount] = useState(10)
   const [minimumProfitMarginPercent, setMinimumProfitMarginPercent] = useState(10)
   const [productDefaults, setProductDefaults] = useState<ProductDefaults>(initialProductDefaults)
+  const [productDefaultsLoaded, setProductDefaultsLoaded] = useState(false)
   const [expandedOptionsId, setExpandedOptionsId] = useState<string | null>(null)
   const [showNewProductForm, setShowNewProductForm] = useState(false)
+  const [quickCostDrafts, setQuickCostDrafts] = useState<Record<string, string>>({})
+  const [quickSavingId, setQuickSavingId] = useState<string | null>(null)
+  const [quickEditError, setQuickEditError] = useState<{ offerId: string; message: string } | null>(null)
+  const [sortBy, setSortBy] = useState('offer_name')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [form, setForm] = useState<ProductForm>(() => createEmptyForm(initialProductDefaults))
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
@@ -144,6 +152,8 @@ export default function ProductsPage() {
         : createEmptyForm(nextDefaults))
     } catch (err) {
       console.error('Product defaults load failed', err)
+    } finally {
+      setProductDefaultsLoaded(true)
     }
   }
 
@@ -234,10 +244,119 @@ export default function ProductsPage() {
     }
   }
 
+  async function saveQuickCost(product: Product, rawCost: string) {
+    if (rawCost.trim() === '') {
+      if (product.unit_cost != null) {
+        setQuickCostDrafts((current) => ({ ...current, [product.offer_id]: String(product.unit_cost) }))
+        setQuickEditError({ offerId: product.offer_id, message: 'Koszt netto nie może być pusty.' })
+      }
+      return
+    }
+    const netPurchaseCost = Number(rawCost)
+    if (!Number.isFinite(netPurchaseCost) || netPurchaseCost < 0) {
+      setQuickEditError({ offerId: product.offer_id, message: 'Podaj koszt netto równy lub większy od zera.' })
+      return
+    }
+    if (product.unit_cost != null && netPurchaseCost === product.unit_cost) {
+      setQuickCostDrafts((current) => {
+        const { [product.offer_id]: _draft, ...remaining } = current
+        return remaining
+      })
+      setQuickEditError(null)
+      return
+    }
+
+    setQuickSavingId(product.offer_id)
+    setQuickEditError(null)
+    setNotice(null)
+    let saved = false
+    try {
+      const autoFillSalePrice = product.sale_price_net == null
+      const purchaseVatRate = !product.vat_verified && autoFillSalePrice
+        ? Number(productDefaults.purchaseVatRate)
+        : product.purchase_vat_rate
+      const salesVatRate = !product.vat_verified && autoFillSalePrice
+        ? Number(productDefaults.salesVatRate)
+        : product.sales_vat_rate
+      const vatDeductiblePercent = !product.vat_verified && autoFillSalePrice
+        ? Number(productDefaults.vatDeductiblePercent)
+        : product.vat_deductible_percent
+      const suggestedSalePrice = autoFillSalePrice
+        ? calculateSuggestedSalePriceFromNetPurchase(
+            netPurchaseCost,
+            purchaseVatRate,
+            vatDeductiblePercent,
+            minimumProfitAmount,
+            minimumProfitMarginPercent,
+            salesVatRate
+          )
+        : null
+      const result = await (window as any).allegroAPI.products.save({
+        offerId: product.offer_id,
+        offerName: product.offer_name,
+        sku: product.sku || '',
+        netPurchaseCost: String(netPurchaseCost),
+        netSalePrice: suggestedSalePrice
+          ? suggestedSalePrice.net.toFixed(2)
+          : product.sale_price_net == null ? '' : String(product.sale_price_net),
+        purchaseVatRate: String(purchaseVatRate),
+        salesVatRate: String(salesVatRate),
+        vatDeductiblePercent: String(vatDeductiblePercent),
+        vatVerified: Boolean(product.vat_verified),
+        isSmartOffer: Boolean(product.is_smart_offer),
+        currency: product.currency || 'PLN',
+        notes: product.notes || ''
+      })
+      if (!result?.ok) throw new Error(result?.error || 'Nie udało się zapisać kosztu zakupu.')
+      saved = true
+      const refreshedProducts = await (window as any).allegroAPI.products.list()
+      if (!Array.isArray(refreshedProducts)) throw new Error('Katalog nie zwrócił prawidłowych danych.')
+      setProducts(refreshedProducts)
+      setQuickCostDrafts((current) => {
+        const { [product.offer_id]: _draft, ...remaining } = current
+        return remaining
+      })
+      setNotice(suggestedSalePrice
+        ? `Zapisano koszt zakupu i proponowaną cenę sprzedaży brutto ${money(suggestedSalePrice.gross, product.currency)} dla „${product.offer_name}”. Domyślny VAT wymaga potwierdzenia.`
+        : `Zapisano koszt zakupu dla „${product.offer_name}”.`)
+      setError(null)
+    } catch (err) {
+      setQuickEditError({
+        offerId: product.offer_id,
+        message: saved
+          ? 'Koszt zapisano, ale nie udało się odświeżyć katalogu. Odśwież stronę, aby zobaczyć zmianę.'
+          : err instanceof Error ? err.message : 'Nie udało się zapisać kosztu zakupu.'
+      })
+    } finally {
+      setQuickSavingId(null)
+    }
+  }
+
   const filteredProducts = products.filter((product) => {
     const query = search.trim().toLocaleLowerCase('pl-PL')
     return !query || [product.offer_name, product.offer_id, product.sku || ''].some((value) => value.toLocaleLowerCase('pl-PL').includes(query))
   })
+  const sortedProducts = sortRows(filteredProducts, (product) => {
+    if (sortBy === 'estimated_profit') {
+      return product.vat_verified && product.sale_price_net != null && product.grossPurchaseCost != null
+        ? product.sale_price_net - product.grossPurchaseCost
+        : null
+    }
+    if (sortBy === 'estimated_gross_price') {
+      return product.estimatedGrossPrice ?? (product.sale_price_net == null
+        ? null
+        : product.sale_price_net * (1 + product.sales_vat_rate / 100))
+    }
+    return product[sortBy as keyof Product] as string | number | null
+  }, sortDirection)
+
+  function changeSort(key: string) {
+    if (sortBy === key) setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')
+    else {
+      setSortBy(key)
+      setSortDirection('asc')
+    }
+  }
 
   const purchaseNet = Number(form.netPurchaseCost) || 0
   const purchaseVat = purchaseNet * (Number(form.purchaseVatRate) || 0) / 100
@@ -315,7 +434,6 @@ export default function ProductsPage() {
           <p className="text-xs text-gray-500">Nowe pozycje z raportów nie otrzymują automatycznie założonych kosztów ani potwierdzonych stawek VAT.</p>
 
           {error ? <div role="alert" className="rounded border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{error}</div> : null}
-          {notice ? <div role="status" className="rounded border border-green-500/30 bg-green-500/10 px-3 py-2 text-sm text-green-300">{notice}</div> : null}
           <div className={`product-form-actions ${inline ? 'product-form-actions-inline' : ''} flex flex-wrap gap-2`}>
             <button type="submit" disabled={saving || !form.vatVerified} className="px-4 py-2 bg-green-600 text-white rounded">{saving ? 'Zapisuję…' : editing ? 'Zapisz zmiany' : 'Dodaj do katalogu'}</button>
             <button type="button" onClick={closeProductEditor} className="secondary-action px-4 py-2">Anuluj</button>
@@ -347,11 +465,17 @@ export default function ProductsPage() {
           className="table-scroll min-h-0 flex-1 overflow-auto"
         >
           <table className="w-full table-fixed text-left text-xs">
-            <thead><tr><th className="w-[42%] p-2">Produkt</th><th className="w-[25%] p-2">Szacowany zysk / marża</th><th className="w-[18%] p-2">Sprzedaż brutto</th><th className="w-[15%] p-2">Szczegóły</th></tr></thead>
+            <thead><tr>
+              <SortableTableHeader label="Produkt" sortKey="offer_name" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="w-[34%] p-2" />
+              <SortableTableHeader label="Zakup netto" sortKey="unit_cost" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="w-[18%] p-2" />
+              <SortableTableHeader label="Szacowany zysk / marża" sortKey="estimated_profit" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="w-[20%] p-2" />
+              <SortableTableHeader label="Sprzedaż brutto" sortKey="estimated_gross_price" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="w-[15%] p-2" />
+              <th className="w-[13%] p-2">Szczegóły</th>
+            </tr></thead>
             <tbody>
-              {loading && <tr><td colSpan={4} className="table-empty">Wczytywanie katalogu…</td></tr>}
-              {!loading && filteredProducts.length === 0 && <tr><td colSpan={4} className="table-empty">{products.length ? 'Brak produktów pasujących do wyszukiwania.' : 'Katalog jest pusty. Zaimportuj rozliczenia lub dodaj produkt powyżej.'}</td></tr>}
-              {filteredProducts.map((product) => {
+              {loading && <tr><td colSpan={5} className="table-empty">Wczytywanie katalogu…</td></tr>}
+              {!loading && filteredProducts.length === 0 && <tr><td colSpan={5} className="table-empty">{products.length ? 'Brak produktów pasujących do wyszukiwania.' : 'Katalog jest pusty. Zaimportuj rozliczenia lub dodaj produkt powyżej.'}</td></tr>}
+              {sortedProducts.map((product) => {
                 const estimatedProfit = product.vat_verified && product.sale_price_net != null && product.grossPurchaseCost != null
                   ? Math.round((product.sale_price_net - product.grossPurchaseCost) * 100) / 100
                   : null
@@ -363,6 +487,11 @@ export default function ProductsPage() {
                 const minimumSalePrice = product.vat_verified && product.grossPurchaseCost != null
                   ? calculateMinimumSalePrice(product.grossPurchaseCost, minimumProfitAmount, minimumProfitMarginPercent, product.sales_vat_rate)
                   : null
+                const displayedGrossPrice = product.estimatedGrossPrice ?? (
+                  product.sale_price_net == null
+                    ? null
+                    : Math.round(product.sale_price_net * (1 + product.sales_vat_rate / 100) * 100) / 100
+                )
                 return (
                   <React.Fragment key={product.offer_id}>
                   <tr>
@@ -372,14 +501,48 @@ export default function ProductsPage() {
                     <div className="mt-1 flex flex-wrap gap-1">{product.is_auto_discovered ? <span className="status-pill status-pill-accent">Z raportu</span> : null}{product.unit_cost == null ? <span className="status-pill status-pill-error">Brak kosztu</span> : null}{!product.vat_verified ? <span className="status-pill status-pill-error">VAT?</span> : null}{product.smartDeliveryOperations ? <span className="status-pill status-pill-success">SMART</span> : null}{product.linkedOrders ? <span className="status-pill">{product.linkedOrders} zam. z opłatami oferty</span> : null}</div>
                   </td>
                   <td className="p-2">
+                    <label className="sr-only" htmlFor={`quick-cost-${product.offer_id}`}>Koszt zakupu netto ({product.currency})</label>
+                    <div className="flex items-center gap-1">
+                      <input
+                        id={`quick-cost-${product.offer_id}`}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={quickCostDrafts[product.offer_id] ?? (product.unit_cost == null ? '' : String(product.unit_cost))}
+                        placeholder="Wpisz kwotę"
+                        disabled={quickSavingId === product.offer_id || !productDefaultsLoaded}
+                        onChange={event => {
+                          setQuickCostDrafts((current) => ({ ...current, [product.offer_id]: event.target.value }))
+                          setQuickEditError(null)
+                          setNotice(null)
+                        }}
+                        onBlur={event => { void saveQuickCost(product, event.currentTarget.value) }}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            event.currentTarget.blur()
+                          }
+                        }}
+                        aria-label={`Koszt zakupu netto dla ${product.offer_name}`}
+                        className="w-28 min-w-0 rounded border p-1.5 text-sm"
+                      />
+                      <span className="text-xs text-gray-500">{product.currency}</span>
+                      {quickSavingId === product.offer_id ? <span role="status" className="text-xs text-gray-500">Zapis…</span> : null}
+                    </div>
+                    {quickEditError?.offerId === product.offer_id ? <div role="alert" className="mt-1 max-w-40 text-xs text-red-500">{quickEditError.message}</div> : null}
+                  </td>
+                  <td className="p-2">
                     {estimatedProfit == null || estimatedMarginPercent == null
                       ? <span className="status-pill">Uzupełnij dane</span>
                       : <><span className={`status-pill ${meetsMarginRules ? 'status-pill-success' : 'status-pill-error'}`}>{estimatedProfit < 0 ? 'STRATA' : meetsMarginRules ? 'PRÓG OK' : 'PONIŻEJ PROGU'}</span><strong className="mt-1 block">{money(estimatedProfit, product.currency)}</strong><span className="text-gray-500">Marża {estimatedMarginPercent.toFixed(1)}%</span></>}
                   </td>
-                  <td className="p-2 font-medium">{money(product.estimatedGrossPrice, product.currency)}</td>
+                  <td className="p-2">
+                    <strong className="font-medium">{money(displayedGrossPrice, product.currency)}</strong>
+                    {!product.vat_verified && displayedGrossPrice != null ? <span className="mt-1 block text-[10px] text-gray-500">Propozycja · VAT do potwierdzenia</span> : null}
+                  </td>
                   <td className="p-2"><button type="button" aria-expanded={expandedOptionsId === product.offer_id} onClick={() => setExpandedOptionsId((current) => current === product.offer_id ? null : product.offer_id)} className="secondary-action px-2 py-1">{expandedOptionsId === product.offer_id ? 'Ukryj' : 'Szczegóły'}</button></td>
                   </tr>
-                  {expandedOptionsId === product.offer_id ? <tr><td colSpan={4} className="p-3">
+                  {expandedOptionsId === product.offer_id ? <tr><td colSpan={5} className="p-3">
                     {editing && form.offerId === product.offer_id ? renderProductEditor(true) : <section className="rounded border p-4">
                       <h4 className="font-semibold">Szczegóły produktu: {product.offer_name}</h4>
                       <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-3 lg:grid-cols-5">

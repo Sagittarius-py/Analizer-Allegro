@@ -1,26 +1,86 @@
 import React, { useEffect, useState } from 'react'
+import SortableTableHeader from '../components/SortableTableHeader'
 import { formatLocalDate, translateOrderStatus } from '../utils/localization'
+import { sortRows, type SortDirection } from '../utils/tableSorting'
 
 export default function OrdersPage() {
   const [orders, setOrders] = useState<any[]>([])
   const [q, setQ] = useState('')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [filters, setFilters] = useState({ q: '', dateFrom: '', dateTo: '' })
+  const [filterError, setFilterError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [page, setPage] = useState(0)
+  const [sortBy, setSortBy] = useState('order_date')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
+  const [offerSortBy, setOfferSortBy] = useState('offerName')
+  const [offerSortDirection, setOfferSortDirection] = useState<SortDirection>('asc')
   const [selected, setSelected] = useState<any>(null)
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null)
   const [detailsLoading, setDetailsLoading] = useState(false)
   const [loading, setLoading] = useState(false)
 
   async function load() {
-    const opts = { limit: 50, offset: page * 50, q: q || null }
+    const opts = {
+      limit: 50,
+      offset: page * 50,
+      q: filters.q || null,
+      dateFrom: filters.dateFrom || null,
+      dateTo: filters.dateTo || null,
+      sortBy,
+      sortDirection
+    }
     setLoading(true)
+    setLoadError(null)
     try {
       const res = await (window as any).allegroAPI.database.orders.list(opts)
-      setOrders(res || [])
-    } catch (err) { setOrders([]) }
+      if (!Array.isArray(res)) throw new Error(res?.error || 'Nie udało się pobrać zamówień.')
+      setOrders(res)
+    } catch (err) {
+      setOrders([])
+      setLoadError(err instanceof Error ? err.message : 'Nie udało się pobrać zamówień.')
+    }
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load() }, [page])
+  useEffect(() => { load() }, [page, filters, sortBy, sortDirection])
+
+  function changeSort(key: string) {
+    setPage(0)
+    if (sortBy === key) setSortDirection((current) => current === 'asc' ? 'desc' : 'asc')
+    else {
+      setSortBy(key)
+      setSortDirection('asc')
+    }
+  }
+
+  function changeOfferSort(key: string) {
+    if (offerSortBy === key) setOfferSortDirection((current) => current === 'asc' ? 'desc' : 'asc')
+    else {
+      setOfferSortBy(key)
+      setOfferSortDirection('asc')
+    }
+  }
+
+  function applyFilters() {
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      setFilterError('Data początkowa nie może być późniejsza niż końcowa.')
+      return
+    }
+    setFilterError(null)
+    setPage(0)
+    setFilters({ q: q.trim(), dateFrom, dateTo })
+  }
+
+  function clearFilters() {
+    setQ('')
+    setDateFrom('')
+    setDateTo('')
+    setFilterError(null)
+    setPage(0)
+    setFilters({ q: '', dateFrom: '', dateTo: '' })
+  }
 
   async function toggleDetails(orderId: string) {
     if (expandedOrderId === orderId) {
@@ -42,22 +102,27 @@ export default function OrdersPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div><div className="eyebrow">SPRZEDAŻ</div><h2 className="section-title">Zamówienia</h2></div>
-        <form className="flex w-full gap-2 sm:w-auto" onSubmit={event => { event.preventDefault(); setPage(0); load() }}>
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Szukaj po ID lub rynku" aria-label="Szukaj zamówień" className="min-w-0 flex-1 p-2 sm:w-72" />
-          <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">Szukaj</button>
+        <form className="grid w-full grid-cols-1 gap-2 sm:w-auto sm:grid-cols-2 lg:grid-cols-[minmax(12rem,1fr)_minmax(10rem,auto)_minmax(10rem,auto)_auto_auto]" onSubmit={event => { event.preventDefault(); applyFilters() }}>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Szukaj po ID lub rynku" aria-label="Szukaj zamówień" className="min-w-0 p-2 sm:col-span-2 lg:col-span-1" />
+          <label className="text-sm">Data od<input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="mt-1 block w-full p-2" /></label>
+          <label className="text-sm">Data do<input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="mt-1 block w-full p-2" /></label>
+          <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">Filtruj</button>
+          <button type="button" onClick={clearFilters} className="secondary-action px-4 py-2">Wyczyść</button>
         </form>
       </div>
+      {filterError ? <div role="alert" className="text-sm text-red-500">{filterError}</div> : null}
+      {loadError ? <div role="alert" className="text-sm text-red-500">{loadError}</div> : null}
 
       <div className="panel overflow-hidden">
         <div className="table-scroll overflow-auto">
         <table className="w-full min-w-[720px] table-auto">
           <thead>
             <tr className="text-left text-sm text-gray-500">
-              <th className="p-2">ID</th>
-              <th className="p-2">Data</th>
-              <th className="p-2">Kwota po opłatach</th>
-              <th className="p-2">Dostawa</th>
-              <th className="p-2">Status</th>
+              <SortableTableHeader label="ID" sortKey="order_id" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="p-2" />
+              <SortableTableHeader label="Data" sortKey="order_date" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="p-2" />
+              <SortableTableHeader label="Kwota po opłatach" sortKey="amount_after_linked_costs" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="p-2" />
+              <SortableTableHeader label="Dostawa" sortKey="is_smart_delivery" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="p-2" />
+              <SortableTableHeader label="Status" sortKey="seller_status" activeSortKey={sortBy} direction={sortDirection} onSort={changeSort} className="p-2" />
               <th className="p-2">Akcje</th>
             </tr>
           </thead>
@@ -106,9 +171,13 @@ export default function OrdersPage() {
                         <div className="table-scroll mt-2 overflow-auto">
                           <table className="w-full min-w-[640px] text-left text-xs">
                             <thead><tr className="text-gray-500">
-                              <th className="p-2">Oferta</th><th className="p-2">Prowizja</th><th className="p-2">Dostawa</th><th className="p-2">Inne opłaty</th><th className="p-2">Razem</th>
+                              <SortableTableHeader label="Oferta" sortKey="offerName" activeSortKey={offerSortBy} direction={offerSortDirection} onSort={changeOfferSort} className="p-2" />
+                              <SortableTableHeader label="Prowizja" sortKey="commissionCost" activeSortKey={offerSortBy} direction={offerSortDirection} onSort={changeOfferSort} className="p-2" />
+                              <SortableTableHeader label="Dostawa" sortKey="deliveryCost" activeSortKey={offerSortBy} direction={offerSortDirection} onSort={changeOfferSort} className="p-2" />
+                              <SortableTableHeader label="Inne opłaty" sortKey="otherCosts" activeSortKey={offerSortBy} direction={offerSortDirection} onSort={changeOfferSort} className="p-2" />
+                              <SortableTableHeader label="Razem" sortKey="totalCosts" activeSortKey={offerSortBy} direction={offerSortDirection} onSort={changeOfferSort} className="p-2" />
                             </tr></thead>
-                            <tbody>{selected.offerSummaries.map((offer: any) => <tr key={offer.offerId} className="border-t">
+                            <tbody>{sortRows(selected.offerSummaries, (offer: any) => offer[offerSortBy], offerSortDirection).map((offer: any) => <tr key={offer.offerId} className="border-t">
                               <td className="p-2"><strong className="block">{offer.offerName}</strong><span className="text-gray-500">ID: {offer.offerId} · {offer.operationCount} operacji</span></td>
                               <td className="p-2">{offer.commissionCost.toFixed(2)} PLN</td>
                               <td className="p-2">{offer.deliveryCost.toFixed(2)} PLN</td>

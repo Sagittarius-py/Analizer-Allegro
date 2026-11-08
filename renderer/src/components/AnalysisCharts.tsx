@@ -52,7 +52,7 @@ export function TrendAnalysisChart({ data }: TrendChartProps) {
   return (
     <div className="trend-chart-wrap">
       <div className="chart-legend" aria-label="Legenda wykresu">
-        <span><i className="legend-dot legend-revenue" />Przychód</span>
+        <span><i className="legend-dot legend-revenue" />Przychód PLN</span>
         <span><i className="legend-dot legend-cost" />Koszty netto</span>
       </div>
       <div className="trend-chart-scroll">
@@ -95,7 +95,7 @@ export function TrendAnalysisChart({ data }: TrendChartProps) {
                   cy={revenueY}
                   r="4"
                   tabIndex={0}
-                  aria-label={`${point.date}: przychód ${point.revenue.toFixed(2)} PLN`}
+                  aria-label={`${point.date}: przychód PLN ${point.revenue.toFixed(2)}`}
                   onFocus={() => setHoveredPoint(index)}
                   onBlur={() => setHoveredPoint(null)}
                 />
@@ -124,7 +124,7 @@ export function TrendAnalysisChart({ data }: TrendChartProps) {
                 <rect x={tooltipX} y={tooltipY} width="174" height="58" rx="6" />
                 <text className="chart-tooltip-date" x={tooltipX + 10} y={tooltipY + 15}>{point.date}</text>
                 <circle className="chart-tooltip-revenue-dot" cx={tooltipX + 13} cy={tooltipY + 30} r="3" />
-                <text className="chart-tooltip-value" x={tooltipX + 22} y={tooltipY + 33}>Przychód {point.revenue.toFixed(2)} PLN</text>
+                <text className="chart-tooltip-value" x={tooltipX + 22} y={tooltipY + 33}>Przychód PLN {point.revenue.toFixed(2)}</text>
                 <circle className="chart-tooltip-cost-dot" cx={tooltipX + 13} cy={tooltipY + 46} r="3" />
                 <text className="chart-tooltip-value" x={tooltipX + 22} y={tooltipY + 49}>Koszty {point.costs.toFixed(2)} PLN</text>
               </g>

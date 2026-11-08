@@ -11,26 +11,27 @@ contextBridge.exposeInMainWorld('allegroAPI', {
     }
   },
   costs: {
-    breakdown: () => ipcRenderer.invoke('costs:breakdown')
+    breakdown: (options) => ipcRenderer.invoke('costs:breakdown', options)
   },
   products: {
-    breakdown: () => ipcRenderer.invoke('products:breakdown'),
+    breakdown: (options) => ipcRenderer.invoke('products:breakdown', options),
     list: () => ipcRenderer.invoke('products:list'),
     save: (product) => ipcRenderer.invoke('products:save', product),
     delete: (offerId) => ipcRenderer.invoke('products:delete', offerId)
   },
   analytics: {
-    sourceSummary: () => ipcRenderer.invoke('analytics:sourceSummary')
+    sourceSummary: (options) => ipcRenderer.invoke('analytics:sourceSummary', options)
   },
   trends: {
     data: (days) => ipcRenderer.invoke('trends:data', days)
   },
   reports: {
     save: (name, dateFrom, dateTo, snapshot) => ipcRenderer.invoke('reports:save', name, dateFrom, dateTo, snapshot),
-    list: (limit) => ipcRenderer.invoke('reports:list', limit),
+    list: (options) => ipcRenderer.invoke('reports:list', options),
     get: (id) => ipcRenderer.invoke('reports:get', id),
     delete: (id) => ipcRenderer.invoke('reports:delete', id),
-    pin: (id, pinned) => ipcRenderer.invoke('reports:pin', id, pinned)
+    pin: (id, pinned) => ipcRenderer.invoke('reports:pin', id, pinned),
+    exportCsv: (id) => ipcRenderer.invoke('reports:exportCsv', id)
   }
 });
 
@@ -52,6 +53,7 @@ contextBridge.exposeInMainWorld('allegroSettings', {
   exportDb: () => ipcRenderer.invoke('settings:exportDb')
   ,
   factoryReset: (confirmation) => ipcRenderer.invoke('settings:factoryReset', confirmation),
+  restoreDb: () => ipcRenderer.invoke('settings:restoreDb'),
   validatePath: (p) => ipcRenderer.invoke('settings:validatePath', p),
   selectFolder: () => ipcRenderer.invoke('settings:selectFolder'),
   createFolder: (p) => ipcRenderer.invoke('settings:createFolder', p)

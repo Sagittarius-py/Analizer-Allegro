@@ -59,7 +59,7 @@ export default function App() {
             {page === 'import' && <ImportPage />}
             {page === 'orders' && <OrdersPage />}
             {page === 'products' && <ProductsPage />}
-            {page === 'costs' && <CostsPage />}
+            {page === 'costs' && <CostsPage onNavigate={navigateTo} />}
             {page === 'reports' && <ReportsPage />}
             {page === 'settings' && (
               <div className="p-6">

@@ -1,4 +1,4 @@
-const { app, ipcMain } = require('electron');
+const { app, ipcMain, dialog } = require('electron');
 let repo = null;
 try {
   const dbEnabled = !process.env.SKIP_DB && (app.isPackaged || process.env.ELECTRON_ENABLE_DB === '1');
@@ -11,6 +11,7 @@ try {
 const ordersParser = require('../importers/ordersParser');
 const billingParser = require('../importers/billingParser');
 const { detectReportType } = require('../importers/detectReportType');
+const { createReportCsv } = require('../exporters/reportCsv');
 const fs = require('fs');
 const path = require('path');
 
@@ -18,6 +19,7 @@ const path = require('path');
 const repoStub = {
   getDatabaseInfo: () => ({ error: 'DB disabled in dev mode' }),
   createDatabaseBackup: () => { throw new Error('Baza danych jest niedostępna.'); },
+  restoreDatabaseBackup: () => { throw new Error('Baza danych jest niedostępna.'); },
   resetUserData: () => { throw new Error('Baza danych jest niedostępna.'); },
   listImports: () => [],
   getMetricsSummary: () => ({ error: 'DB disabled in dev mode' }),
@@ -125,15 +127,37 @@ function registerIpcHandlers() {
 
   ipcMain.handle('settings:exportDb', async (event) => {
     try {
-      const { dialog } = require('electron');
-      const fs = require('fs');
-      const dbInfo = useRepo.getDatabaseInfo();
       const defaultName = `allegro-db-backup-${new Date().toISOString().slice(0,10)}.db`;
       const res = await dialog.showSaveDialog({ defaultPath: defaultName, filters: [{ name: 'SQLite', extensions: ['db', 'sqlite'] }] });
       if (res.canceled) return { canceled: true };
-      fs.copyFileSync(dbInfo.path, res.filePath);
+      if (!res.filePath) throw new Error('Nie wybrano miejsca zapisu kopii.');
+      await useRepo.createDatabaseBackup(res.filePath);
       return { ok: true, path: res.filePath };
     } catch (err) {
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('settings:restoreDb', async () => {
+    try {
+      const selection = await dialog.showOpenDialog({
+        title: 'Wybierz kopię bazy Allegro Profit Analyzer',
+        properties: ['openFile'],
+        filters: [{ name: 'Baza SQLite', extensions: ['db', 'sqlite', 'sqlite3'] }]
+      });
+      if (selection.canceled) return { canceled: true };
+      const sourcePath = selection.filePaths && selection.filePaths[0];
+      if (!sourcePath) throw new Error('Nie wybrano pliku kopii zapasowej.');
+
+      const backupFolder = path.join(app.getPath('userData'), 'allegro-profit-analyzer', 'backups');
+      fs.mkdirSync(backupFolder, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const backupPath = path.join(backupFolder, `kopia-przed-przywroceniem-${timestamp}.db`);
+      await useRepo.createDatabaseBackup(backupPath);
+      const restoredPath = useRepo.restoreDatabaseBackup(sourcePath);
+      return { ok: true, backupPath, restoredPath };
+    } catch (err) {
+      console.error('Database restore failed', err);
       return { error: err.message };
     }
   });
@@ -149,7 +173,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('settings:selectFolder', async (event, opts = {}) => {
-    const { dialog } = require('electron');
     try {
       const res = await dialog.showOpenDialog({ properties: ['openDirectory'] });
       if (res.canceled) return { canceled: true };
@@ -236,14 +259,14 @@ function registerIpcHandlers() {
     // optional auto-backup before making changes
     try {
       const auto = useRepo.getSetting('auto_backup');
+      const autoBackupEnabled = auto === true || auto === 1 || auto === 'true' || auto === '1';
       const backupPath = useRepo.getSetting('backup_path');
-      if (auto && backupPath) {
+      if (autoBackupEnabled && backupPath) {
         try {
-          const dbInfo = useRepo.getDatabaseInfo();
           const ts = new Date().toISOString().replace(/[:]/g, '-');
           const dest = path.join(backupPath, `allegro-db-backup-${ts}.db`);
           if (fs.existsSync(backupPath)) {
-            fs.copyFileSync(dbInfo.path, dest);
+            await useRepo.createDatabaseBackup(dest);
           }
         } catch (err) {
           // non-fatal: continue without backup
@@ -322,7 +345,6 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('import:selectFiles', async (event, opts = {}) => {
-    const { dialog } = require('electron');
     const fs = require('fs');
     const path = require('path');
     try {
@@ -349,17 +371,17 @@ function registerIpcHandlers() {
   });
 
   // Phase 7: Costs, products, trends
-  ipcMain.handle('costs:breakdown', async () => {
+  ipcMain.handle('costs:breakdown', async (event, options = {}) => {
     try {
-      return useRepo.getCostsBreakdown();
+      return useRepo.getCostsBreakdown(options);
     } catch (err) {
       return { error: err.message };
     }
   });
 
-  ipcMain.handle('products:breakdown', async () => {
+  ipcMain.handle('products:breakdown', async (event, options = {}) => {
     try {
-      return useRepo.getProductBreakdown();
+      return useRepo.getProductBreakdown(options);
     } catch (err) {
       return { error: err.message };
     }
@@ -389,17 +411,17 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('trends:data', async (event, days = 30) => {
+  ipcMain.handle('trends:data', async (event, options = 30) => {
     try {
-      return useRepo.getTrendsData(days);
+      return useRepo.getTrendsData(options);
     } catch (err) {
       return { error: err.message };
     }
   });
 
-  ipcMain.handle('analytics:sourceSummary', async () => {
+  ipcMain.handle('analytics:sourceSummary', async (event, options = {}) => {
     try {
-      return useRepo.getSourceAnalysis();
+      return useRepo.getSourceAnalysis(options);
     } catch (err) {
       return { error: err.message };
     }
@@ -415,9 +437,9 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('reports:list', async (event, limit = 50) => {
+  ipcMain.handle('reports:list', async (event, options = 50) => {
     try {
-      return useRepo.listReports(limit);
+      return useRepo.listReports(options);
     } catch (err) {
       return { error: err.message };
     }
@@ -427,6 +449,32 @@ function registerIpcHandlers() {
     try {
       return useRepo.getReport(id);
     } catch (err) {
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle('reports:exportCsv', async (event, id) => {
+    try {
+      const report = useRepo.getReport(id);
+      if (!report) return { error: 'Nie znaleziono zapisanego raportu.' };
+      const safeName = String(report.name || 'raport')
+        .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+        .trim()
+        .slice(0, 100) || 'raport';
+      const safePeriod = [report.date_from, report.date_to]
+        .map((date) => String(date || '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-'))
+        .join('-');
+      const selection = await dialog.showSaveDialog({
+        title: 'Eksportuj raport do CSV',
+        defaultPath: `${safeName}-${safePeriod}.csv`,
+        filters: [{ name: 'CSV', extensions: ['csv'] }]
+      });
+      if (selection.canceled) return { canceled: true };
+      if (!selection.filePath) throw new Error('Nie wybrano miejsca zapisu pliku.');
+      await fs.promises.writeFile(selection.filePath, createReportCsv(report), 'utf8');
+      return { ok: true, path: selection.filePath };
+    } catch (err) {
+      console.error('Report CSV export failed', err);
       return { error: err.message };
     }
   });

@@ -11,9 +11,15 @@ const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'allegro-analyzer-test-')
 const app = { isPackaged: false, getPath: () => dataRoot };
 const ipcHandlers = new Map();
 const ipcMain = { handle: (channel, handler) => ipcHandlers.set(channel, handler) };
+const dialog = {
+  openDialogResult: { canceled: true, filePaths: [] },
+  saveDialogResult: { canceled: true },
+  showOpenDialog: async () => dialog.openDialogResult,
+  showSaveDialog: async () => dialog.saveDialogResult
+};
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
-  if (request === 'electron') return { app, ipcMain };
+  if (request === 'electron') return { app, ipcMain, dialog };
   return originalLoad.call(this, request, parent, isMain);
 };
 const repo = require('../electron/db/repository');
@@ -241,6 +247,136 @@ describe('report import IPC', () => {
     assert.strictEqual(deleted.deleted, 1);
     const remaining = await ipcHandlers.get('products:list')();
     assert.strictEqual(remaining.some((item) => item.offer_id === 'offer-vat-1'), false);
+  });
+
+  it('filters orders and saved reports by inclusive date range', async () => {
+    const importId = repo.insertImportRecord({
+      fileName: 'date-filter-orders.csv',
+      fileType: 'orders',
+      rowCount: 4,
+      fileHash: 'date-filter-orders'
+    });
+    repo.insertOrders(importId, [
+      { orderId: 'date-filter-before', orderDate: '2099-01-08T12:00:00.000Z', marketplace: 'date-filter', paymentAmount: 5, paymentCurrency: 'PLN' },
+      { orderId: 'date-filter-start', orderDate: '2099-01-09T12:00:00.000Z', marketplace: 'date-filter', paymentAmount: 10, paymentCurrency: 'PLN' },
+      { orderId: 'date-filter-end', orderDate: '2099-01-13T12:00:00.000Z', marketplace: 'date-filter', paymentAmount: 30, paymentCurrency: 'PLN' },
+      { orderId: 'date-filter-after', orderDate: '2099-01-14T12:00:00.000Z', marketplace: 'date-filter', paymentAmount: 40, paymentCurrency: 'PLN' }
+    ]);
+
+    const filteredOrders = await ipcHandlers.get('orders:list')(null, {
+      q: 'date-filter',
+      dateFrom: '2099-01-09',
+      dateTo: '2099-01-13'
+    });
+    assert.deepStrictEqual(filteredOrders.map((order) => order.order_id).sort(), [
+      'date-filter-end',
+      'date-filter-start'
+    ]);
+    const sortedOrders = await ipcHandlers.get('orders:list')(null, {
+      q: 'date-filter',
+      dateFrom: '2099-01-09',
+      dateTo: '2099-01-13',
+      sortBy: 'amount_after_linked_costs',
+      sortDirection: 'asc'
+    });
+    assert.deepStrictEqual(sortedOrders.map((order) => order.order_id), [
+      'date-filter-start',
+      'date-filter-end'
+    ]);
+    assert.match((await ipcHandlers.get('orders:list')(null, {
+      dateFrom: '2099-01-14',
+      dateTo: '2099-01-09'
+    })).error, /Start date must not be after end date/);
+
+    repo.saveReport('date-filter-before', '2099-01-01', '2099-01-08', {});
+    repo.saveReport('date-filter-start', '2099-01-09', '2099-01-10', {});
+    repo.saveReport('date-filter-spanning', '2099-01-11', '2099-01-15', {});
+    repo.saveReport('date-filter-end', '2099-01-13', '2099-01-20', {});
+    repo.saveReport('date-filter-after', '2099-01-21', '2099-01-30', {});
+    const filteredReports = await ipcHandlers.get('reports:list')(null, {
+      limit: 50,
+      dateFrom: '2099-01-09',
+      dateTo: '2099-01-13'
+    });
+    assert.deepStrictEqual(
+      filteredReports.map((report) => report.name).filter((name) => name.startsWith('date-filter-')).sort(),
+      ['date-filter-end', 'date-filter-spanning', 'date-filter-start']
+    );
+    assert.match((await ipcHandlers.get('reports:list')(null, {
+      dateFrom: '2099-01-14',
+      dateTo: '2099-01-09'
+    })).error, /Start date must not be after end date/);
+  });
+
+  it('honors the automatic-backup setting and creates SQLite-safe backups before imports', async () => {
+    const backupFolder = path.join(dataRoot, 'configured-backups');
+    fs.mkdirSync(backupFolder, { recursive: true });
+    repo.setSetting('backup_path', backupFolder);
+    repo.setSetting('auto_backup', false);
+
+    await ipcHandlers.get('import:commit')(null, []);
+    assert.deepStrictEqual(fs.readdirSync(backupFolder), []);
+
+    repo.setSetting('auto_backup', true);
+    await ipcHandlers.get('import:commit')(null, []);
+    const backupFiles = fs.readdirSync(backupFolder);
+    assert.strictEqual(backupFiles.length, 1);
+    const backup = new Database(path.join(backupFolder, backupFiles[0]), { readonly: true });
+    try {
+      assert.strictEqual(backup.pragma('integrity_check', { simple: true }), 'ok');
+    } finally {
+      backup.close();
+    }
+    repo.setSetting('auto_backup', false);
+  });
+
+  it('exports saved report CSV and restores only a valid backup after protecting the current database', async () => {
+    const reportId = repo.saveReport('Raport testowy', '2026-06-01', '2026-06-30', {
+      metrics: { orders: 1, revenue: 25, revenueByCurrency: { PLN: 25, EUR: 5 }, balance: 12 },
+      costs: [{ category: 'commission', cost: 2, count: 1 }],
+      trends: [{ date: '2026-06-01', revenue: 25, costs: 2, profit: 23 }]
+    });
+    const exportPath = path.join(dataRoot, 'report-export.csv');
+    dialog.saveDialogResult = { canceled: false, filePath: exportPath };
+    const exportResult = await ipcHandlers.get('reports:exportCsv')(null, reportId);
+    assert.strictEqual(exportResult.ok, true);
+    const exportedCsv = fs.readFileSync(exportPath, 'utf8');
+    assert.ok(exportedCsv.startsWith('\uFEFF'));
+    assert.ok(exportedCsv.includes('"Przychód";"25";"PLN"'));
+    assert.ok(exportedCsv.includes('"EUR";"5";"EUR"'));
+
+    const sourceBackupPath = path.join(dataRoot, 'report-restore-source.db');
+    await repo.createDatabaseBackup(sourceBackupPath);
+    const baselineOrders = repo.getSourceAnalysis().orders.total;
+    const extraImportId = repo.insertImportRecord({
+      fileName: 'before-restore.csv',
+      fileType: 'orders',
+      rowCount: 1,
+      dateFrom: '2026-07-01',
+      dateTo: '2026-07-01',
+      fileHash: 'before-restore'
+    });
+    repo.insertOrders(extraImportId, [{
+      orderId: 'before-restore-order',
+      orderDate: '2026-07-01T10:00:00.000Z',
+      sellerStatus: 'PROCESSING',
+      paymentAmount: 10,
+      paymentCurrency: 'PLN'
+    }]);
+
+    dialog.openDialogResult = { canceled: false, filePaths: [sourceBackupPath] };
+    const restoreResult = await ipcHandlers.get('settings:restoreDb')();
+    assert.strictEqual(restoreResult.ok, true);
+    assert.ok(fs.existsSync(restoreResult.backupPath));
+    assert.strictEqual(repo.getSourceAnalysis().orders.total, baselineOrders);
+
+    const protectedCurrent = new Database(restoreResult.backupPath, { readonly: true });
+    try {
+      assert.strictEqual(protectedCurrent.prepare('SELECT COUNT(*) AS count FROM orders').get().count, baselineOrders + 1);
+    } finally {
+      protectedCurrent.close();
+    }
+    dialog.openDialogResult = { canceled: true, filePaths: [] };
   });
 
   it('requires the exact reset phrase, backs up first, clears user data, and preserves category defaults', async () => {

@@ -5,6 +5,7 @@ import { CostCategoryChart, OrderStatusDonut, TrendAnalysisChart } from '../comp
 import { formatLocalDate, translateReportType } from '../utils/localization'
 
 export default function Dashboard({ onNavigate }: { onNavigate: (page: string) => void }) {
+  const [periodDays, setPeriodDays] = useState<number | null>(30)
   const [metrics, setMetrics] = useState<any>(null)
   const [recent, setRecent] = useState<any[]>([])
   const [trends, setTrends] = useState<any[]>([])
@@ -12,15 +13,16 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
   const [sourceSummary, setSourceSummary] = useState<any>(null)
   const [loading, setLoading] = useState(false)
 
-  async function load() {
+  async function load(days = periodDays) {
     setLoading(true)
     try {
+      const options = days == null ? {} : { days }
       const [summary, imports, trendData, costData, sourceData] = await Promise.all([
-        (window as any).allegroMetrics?.getSummary ? (window as any).allegroMetrics.getSummary() : Promise.resolve(null),
+        (window as any).allegroMetrics?.getSummary ? (window as any).allegroMetrics.getSummary(options) : Promise.resolve(null),
         (window as any).allegroAPI?.database?.listImports ? (window as any).allegroAPI.database.listImports(10) : Promise.resolve([]),
-        (window as any).allegroAPI?.trends?.data ? (window as any).allegroAPI.trends.data(30) : Promise.resolve([]),
-        (window as any).allegroAPI?.costs?.breakdown ? (window as any).allegroAPI.costs.breakdown() : Promise.resolve([]),
-        (window as any).allegroAPI?.analytics?.sourceSummary ? (window as any).allegroAPI.analytics.sourceSummary() : Promise.resolve(null)
+        (window as any).allegroAPI?.trends?.data ? (window as any).allegroAPI.trends.data(options) : Promise.resolve([]),
+        (window as any).allegroAPI?.costs?.breakdown ? (window as any).allegroAPI.costs.breakdown(options) : Promise.resolve([]),
+        (window as any).allegroAPI?.analytics?.sourceSummary ? (window as any).allegroAPI.analytics.sourceSummary(options) : Promise.resolve(null)
       ])
       setMetrics(summary && !summary.error ? summary : { orders: 0, revenue: 0, balance: 0, trend: [] })
       setRecent(Array.isArray(imports) ? imports : [])
@@ -38,7 +40,12 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(periodDays) }, [periodDays])
+
+  const otherCurrencies = Object.entries(metrics?.revenueByCurrency || {})
+    .filter(([currency, value]) => currency !== 'PLN' && Number(value) !== 0)
+    .map(([currency, value]) => `${Number(value).toFixed(2)} ${currency === 'N/A' ? 'nieznana waluta' : currency}`)
+    .join(' · ')
 
   return (
     <div className="space-y-6">
@@ -46,15 +53,25 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         <div>
           <div className="eyebrow">CENTRUM SPRZEDAŻY</div>
           <h2 className="section-title">Wyniki w skrócie</h2>
-          <p className="mt-1 text-sm text-gray-500">Podsumowanie danych zapisanych lokalnie na tym urządzeniu.</p>
+          <p className="mt-1 text-sm text-gray-500">Okres jest liczony wstecz od najnowszej daty danych. Przychody i koszty są porównywane w PLN; inne waluty nie są przeliczane.</p>
         </div>
-        <button onClick={load} disabled={loading} className="secondary-action px-3 py-2">{loading ? 'Odświeżam…' : 'Odśwież dane'}</button>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="text-sm text-gray-500">Okres
+            <select value={periodDays ?? 'all'} onChange={(event) => setPeriodDays(event.target.value === 'all' ? null : Number(event.target.value))} className="ml-2 rounded border p-2">
+              <option value="30">30 dni danych</option>
+              <option value="90">90 dni danych</option>
+              <option value="365">365 dni danych</option>
+              <option value="all">Cały okres</option>
+            </select>
+          </label>
+          <button onClick={() => load(periodDays)} disabled={loading} className="secondary-action px-3 py-2">{loading ? 'Odświeżam…' : 'Odśwież dane'}</button>
+        </div>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <MetricCard title="Zamówienia" value={metrics ? metrics.orders : '...'} subtitle="Liczba zamówień">
           <div className="chart-frame"><MiniChart data={trends.map((point) => point.revenue)} /></div>
         </MetricCard>
-        <MetricCard title="Przychód" value={metrics ? `${metrics.revenue} PLN` : '...'} subtitle="Suma przychodów">
+        <MetricCard title="Przychód w PLN" value={metrics ? `${Number(metrics.revenue || 0).toFixed(2)} PLN` : '...'} subtitle={otherCurrencies ? `Pozostałe waluty: ${otherCurrencies}` : 'Zamówienia bez anulowanych'}>
           <div className="chart-frame"><MiniChart data={trends.map((point) => point.revenue)} /></div>
         </MetricCard>
         <MetricCard title="Saldo" value={metrics ? `${metrics.balance} PLN` : '...'} subtitle="Bieżące saldo">
@@ -66,7 +83,7 @@ export default function Dashboard({ onNavigate }: { onNavigate: (page: string) =
         <section className="panel dashboard-trend-panel p-4 sm:p-5">
           <div className="chart-panel-heading">
             <div>
-              <div className="eyebrow">OSTATNIE 30 DNI</div>
+              <div className="eyebrow">{periodDays == null ? 'CAŁY OKRES' : `OSTATNIE ${periodDays} DNI DANYCH`}</div>
               <h3 className="font-semibold">Przychód i koszty w czasie</h3>
             </div>
             {trends.length ? <span className="status-pill">{trends.length} dni z danymi</span> : null}

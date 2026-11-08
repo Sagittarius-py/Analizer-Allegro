@@ -7,6 +7,62 @@ const { expectedSmartFee } = require('../smartFees');
 
 const round2 = (value) => Math.round(value * 100) / 100;
 
+function normalizeIsoDate(value, label) {
+  if (value == null || value === '') return null;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${label} must use YYYY-MM-DD format.`);
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new Error(`${label} is not a valid date.`);
+  }
+  return value;
+}
+
+function resolveDateRange(db, options = {}) {
+  let dateFrom;
+  let dateTo;
+  try {
+    dateFrom = normalizeIsoDate(options.dateFrom, 'Start date');
+    dateTo = normalizeIsoDate(options.dateTo, 'End date');
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    db.close();
+    throw new Error('Start date must not be after end date.');
+  }
+  if (dateFrom || dateTo || options.days == null) return { dateFrom, dateTo };
+
+  const requestedDays = Number(options.days);
+  if (!Number.isFinite(requestedDays)) return { dateFrom: null, dateTo: null };
+  const days = Math.min(3650, Math.max(1, Math.trunc(requestedDays)));
+  const latestDate = db.prepare(`
+    SELECT MAX(d) AS latest_date FROM (
+      SELECT date(order_date) AS d FROM orders
+      UNION ALL
+      SELECT date(operation_date) AS d FROM billing_operations
+    )
+  `).get().latest_date;
+  if (!latestDate) return { dateFrom: null, dateTo: null };
+
+  const start = new Date(`${latestDate}T00:00:00.000Z`);
+  start.setUTCDate(start.getUTCDate() - days + 1);
+  return { dateFrom: start.toISOString().slice(0, 10), dateTo: latestDate };
+}
+
+function appendDateFilters(column, range, filters, params) {
+  if (range.dateFrom) {
+    filters.push(`date(${column}) >= date(?)`);
+    params.push(range.dateFrom);
+  }
+  if (range.dateTo) {
+    filters.push(`date(${column}) <= date(?)`);
+    params.push(range.dateTo);
+  }
+}
+
 function getDbPath() {
   const userData = app.getPath('userData');
   const folder = path.join(userData, 'allegro-profit-analyzer');
@@ -59,6 +115,60 @@ async function createDatabaseBackup(destinationPath) {
     backupDb.close();
   }
   return destinationPath;
+}
+
+function validateDatabaseFile(databasePath) {
+  const backupDb = new Database(databasePath, { readonly: true, fileMustExist: true });
+  try {
+    const integrity = backupDb.pragma('integrity_check', { simple: true });
+    if (integrity !== 'ok') throw new Error('Plik bazy nie przeszedł kontroli integralności.');
+    const tables = new Set(backupDb.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map((row) => row.name));
+    const requiredTables = ['imports', 'orders', 'line_items', 'billing_operations', 'operation_category_map', 'product_cost', 'saved_reports', 'app_settings'];
+    const missingTables = requiredTables.filter((table) => !tables.has(table));
+    if (missingTables.length) {
+      throw new Error(`Plik nie jest kopią bazy Allegro Profit Analyzer (brak tabel: ${missingTables.join(', ')}).`);
+    }
+  } finally {
+    backupDb.close();
+  }
+}
+
+function restoreDatabaseBackup(sourcePath) {
+  const source = path.resolve(String(sourcePath || ''));
+  const { folder, dbPath } = getDbPath();
+  if (!sourcePath || source.toLowerCase() === path.resolve(dbPath).toLowerCase()) {
+    throw new Error('Wybierz osobny plik kopii zapasowej.');
+  }
+  const sourceStats = fs.statSync(source);
+  if (!sourceStats.isFile()) throw new Error('Wybrana ścieżka nie wskazuje na plik kopii zapasowej.');
+  validateDatabaseFile(source);
+
+  fs.mkdirSync(folder, { recursive: true });
+  const uniqueSuffix = `${process.pid}-${Date.now()}`;
+  const temporaryPath = path.join(folder, `database-restore-${uniqueSuffix}.tmp`);
+  const previousPath = path.join(folder, `database-before-restore-${uniqueSuffix}.tmp`);
+  let movedCurrentDatabase = false;
+  let installedRestoredDatabase = false;
+
+  try {
+    fs.copyFileSync(source, temporaryPath, fs.constants.COPYFILE_EXCL);
+    validateDatabaseFile(temporaryPath);
+    if (fs.existsSync(dbPath)) {
+      fs.renameSync(dbPath, previousPath);
+      movedCurrentDatabase = true;
+    }
+    fs.renameSync(temporaryPath, dbPath);
+    installedRestoredDatabase = true;
+    initDatabase(app);
+    if (movedCurrentDatabase) fs.unlinkSync(previousPath);
+    return dbPath;
+  } catch (error) {
+    if (installedRestoredDatabase && fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+    if (movedCurrentDatabase && fs.existsSync(previousPath)) fs.renameSync(previousPath, dbPath);
+    throw error;
+  } finally {
+    if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+  }
 }
 
 function resetUserData() {
@@ -344,59 +454,71 @@ function linkBillingOperationsToOrders() {
 }
 
 function getMetricsSummary(opts = {}) {
-  const { dateFrom = null, dateTo = null, days = 30 } = opts || {};
   const db = openDb();
+  const options = opts || {};
+  const range = resolveDateRange(db, options);
 
-  // Build filters for orders
-  const filters = [];
-  const params = [];
-  if (dateFrom) {
-    filters.push("date(order_date) >= date(?)");
-    params.push(dateFrom);
+  const orderFilters = [];
+  const orderParams = [];
+  appendDateFilters('order_date', range, orderFilters, orderParams);
+  const orderWhere = orderFilters.length ? `WHERE ${orderFilters.join(' AND ')}` : '';
+  const ordersCountRow = db.prepare(`SELECT COUNT(*) AS c FROM orders ${orderWhere}`).get(...orderParams);
+
+  const revenueFilters = [...orderFilters, "UPPER(IFNULL(seller_status, '')) <> 'CANCELLED'"];
+  const revenueRows = db.prepare(`
+    SELECT COALESCE(NULLIF(UPPER(TRIM(payment_currency)), ''), 'N/A') AS currency,
+      IFNULL(SUM(payment_amount), 0) AS revenue
+    FROM orders
+    WHERE ${revenueFilters.join(' AND ')}
+    GROUP BY currency
+  `).all(...orderParams);
+  const revenueByCurrency = Object.fromEntries(revenueRows.map((row) => [row.currency, round2(row.revenue)]));
+
+  const balanceFilters = [];
+  const balanceParams = [];
+  if (range.dateTo) {
+    balanceFilters.push('date(operation_date) <= date(?)');
+    balanceParams.push(range.dateTo);
   }
-  if (dateTo) {
-    filters.push("date(order_date) <= date(?)");
-    params.push(dateTo);
-  }
-  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-
-  const ordersCountRow = db.prepare(`SELECT COUNT(*) as c FROM orders ${where}`).get(...params);
-  const revenueFilter = filters.concat("UPPER(IFNULL(seller_status, '')) <> 'CANCELLED'");
-  const revenueWhere = `WHERE ${revenueFilter.join(' AND ')}`;
-  const revenueRow = db.prepare(`SELECT IFNULL(SUM(payment_amount),0) as s FROM orders ${revenueWhere}`).get(...params);
-
-  // Latest balance from billing_operations (within optional date range)
-  const balFilters = [];
-  const balParams = [];
-  if (dateFrom) { balFilters.push("date(operation_date) >= date(?)"); balParams.push(dateFrom); }
-  if (dateTo) { balFilters.push("date(operation_date) <= date(?)"); balParams.push(dateTo); }
-  const balWhere = balFilters.length ? `WHERE ${balFilters.join(' AND ')}` : '';
-  const latestBalRow = db.prepare(`SELECT balance FROM billing_operations ${balWhere} ORDER BY operation_date DESC LIMIT 1`).get(...balParams);
+  const balanceWhere = balanceFilters.length ? `WHERE ${balanceFilters.join(' AND ')}` : '';
+  const latestBalRow = db.prepare(`SELECT balance FROM billing_operations ${balanceWhere} ORDER BY operation_date DESC, id DESC LIMIT 1`).get(...balanceParams);
   let balance = null;
   if (latestBalRow && typeof latestBalRow.balance !== 'undefined' && latestBalRow.balance !== null) {
     balance = latestBalRow.balance;
   } else {
-    // fallback compute running sum
-    const sumRow = db.prepare(`SELECT IFNULL(SUM(IFNULL(credit,0) - IFNULL(debit,0)),0) as s FROM billing_operations ${balWhere}`).get(...balParams);
+    const sumRow = db.prepare(`SELECT IFNULL(SUM(IFNULL(credit, 0) + IFNULL(debit, 0)), 0) AS s FROM billing_operations ${balanceWhere}`).get(...balanceParams);
     balance = sumRow.s || 0;
   }
 
-  // Trend: daily revenue for last `days`
-  const trendStmt = db.prepare(`SELECT date(order_date) as d, IFNULL(SUM(payment_amount),0) as s FROM orders WHERE date(order_date) >= date('now','-${days} days') GROUP BY d ORDER BY d ASC`);
-  const trendRows = trendStmt.all();
+  const trendRange = options.dateFrom || options.dateTo || options.days != null
+    ? range
+    : resolveDateRange(db, { days: 30 });
+  const trendFilters = ["UPPER(IFNULL(seller_status, '')) <> 'CANCELLED'", "UPPER(IFNULL(payment_currency, '')) = 'PLN'"];
+  const trendParams = [];
+  appendDateFilters('order_date', trendRange, trendFilters, trendParams);
+  const trendRows = db.prepare(`
+    SELECT date(order_date) AS d, IFNULL(SUM(payment_amount), 0) AS s
+    FROM orders
+    WHERE ${trendFilters.join(' AND ')}
+    GROUP BY d
+    ORDER BY d ASC
+  `).all(...trendParams);
   const trend = trendRows.map(r => Number(r.s || 0));
 
   db.close();
 
   return {
     orders: ordersCountRow.c || 0,
-    revenue: Math.round((revenueRow.s || 0) * 100) / 100,
+    revenue: revenueByCurrency.PLN || 0,
+    revenueByCurrency,
     balance: Math.round((balance || 0) * 100) / 100,
-    trend
+    trend,
+    dateFrom: range.dateFrom,
+    dateTo: range.dateTo
   };
 }
 
-module.exports = { openDb, getDatabaseInfo, createDatabaseBackup, resetUserData, listImports, computeHash, findImportByHash, insertImportRecord, insertOrders, insertBillingOperations, linkBillingOperationsToOrders, getMetricsSummary, listProducts, saveProduct, deleteProduct, ensureProductsFromBillingOperations };
+module.exports = { openDb, getDatabaseInfo, createDatabaseBackup, restoreDatabaseBackup, resetUserData, listImports, computeHash, findImportByHash, insertImportRecord, insertOrders, insertBillingOperations, linkBillingOperationsToOrders, getMetricsSummary, listProducts, saveProduct, deleteProduct, ensureProductsFromBillingOperations };
 
 // Settings helpers
 function getSetting(key) {
@@ -452,7 +574,20 @@ module.exports.listSettings = listSettings;
 module.exports.deleteSetting = deleteSetting;
 
 // Orders query helpers
-function listOrders({ limit = 50, offset = 0, q = null } = {}) {
+function listOrders({
+  limit = 50,
+  offset = 0,
+  q = null,
+  dateFrom = null,
+  dateTo = null,
+  sortBy = 'order_date',
+  sortDirection = 'desc'
+} = {}) {
+  dateFrom = normalizeIsoDate(dateFrom, 'Start date');
+  dateTo = normalizeIsoDate(dateTo, 'End date');
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    throw new Error('Start date must not be after end date.');
+  }
   const db = openDb();
   let base = `SELECT o.order_id, o.order_date, o.seller_status, o.marketplace, o.payment_amount, o.payment_currency,
     o.fulfillment_provider, o.import_id,
@@ -467,13 +602,43 @@ function listOrders({ limit = 50, offset = 0, q = null } = {}) {
     FROM orders o
     LEFT JOIN billing_operations b ON b.related_order_id = o.order_id
     LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type`;
+  const filters = [];
   const params = [];
+  if (dateFrom) {
+    filters.push('date(o.order_date) >= date(?)');
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    filters.push('date(o.order_date) <= date(?)');
+    params.push(dateTo);
+  }
   if (q) {
-    base += ' WHERE o.order_id LIKE ? OR o.marketplace LIKE ? OR o.fulfillment_provider LIKE ?';
+    filters.push('(o.order_id LIKE ? OR o.marketplace LIKE ? OR o.fulfillment_provider LIKE ?)');
     const like = `%${q}%`;
     params.push(like, like, like);
   }
-  base += ' GROUP BY o.order_id ORDER BY o.order_date DESC LIMIT ? OFFSET ?';
+  if (filters.length) base += ` WHERE ${filters.join(' AND ')}`;
+  const sortColumns = {
+    order_id: 'order_id',
+    order_date: 'order_date',
+    amount_after_linked_costs: 'amount_after_linked_costs',
+    is_smart_delivery: 'is_smart_delivery',
+    seller_status: 'seller_status'
+  };
+  const sortColumn = Object.prototype.hasOwnProperty.call(sortColumns, sortBy)
+    ? sortColumns[sortBy]
+    : sortColumns.order_date;
+  const direction = String(sortDirection).toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+  base = `SELECT order_rows.*,
+      CASE
+        WHEN order_rows.payment_amount IS NULL
+          OR (order_rows.payment_currency IS NOT NULL AND order_rows.payment_currency <> 'PLN')
+        THEN NULL
+        ELSE order_rows.payment_amount - order_rows.total_costs
+      END AS amount_after_linked_costs
+    FROM (${base} GROUP BY o.order_id) AS order_rows
+    ORDER BY ${sortColumn} ${direction}, order_id ASC
+    LIMIT ? OFFSET ?`;
   params.push(limit, offset);
   const rows = db.prepare(base).all(...params);
   db.close();
@@ -482,9 +647,9 @@ function listOrders({ limit = 50, offset = 0, q = null } = {}) {
     total_costs: Math.round((row.total_costs || 0) * 100) / 100,
     commission_cost: Math.round((row.commission_cost || 0) * 100) / 100,
     delivery_cost: Math.round((row.delivery_cost || 0) * 100) / 100,
-    amount_after_linked_costs: row.payment_amount == null || (row.payment_currency && row.payment_currency !== 'PLN')
+    amount_after_linked_costs: row.amount_after_linked_costs == null
       ? null
-      : Math.round((row.payment_amount - (row.total_costs || 0)) * 100) / 100
+      : Math.round(row.amount_after_linked_costs * 100) / 100
   }));
 }
 
@@ -592,24 +757,35 @@ module.exports.listOrders = listOrders;
 module.exports.getOrderDetails = getOrderDetails;
 
 // Phase 7: Costs, products, trends
-function getCostsBreakdown() {
+function getCostsBreakdown(options = {}) {
   const db = openDb();
+  const range = resolveDateRange(db, options || {});
+  const filters = ["COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1"];
+  const params = [];
+  appendDateFilters('b.operation_date', range, filters, params);
   const rows = db.prepare(`
     SELECT COALESCE(b.operation_category, m.category, 'other') as category,
       SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END - CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) as total_cost,
       COUNT(*) as count
     FROM billing_operations b
     LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
-    WHERE COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+    WHERE ${filters.join(' AND ')}
     GROUP BY category
     ORDER BY total_cost DESC
-  `).all();
+  `).all(...params);
   db.close();
   return rows.map(r => ({ category: r.category, cost: Math.round((r.total_cost || 0) * 100) / 100, count: r.count }));
 }
 
-function getProductBreakdown() {
+function getProductBreakdown(options = {}) {
   const db = openDb();
+  const range = resolveDateRange(db, options || {});
+  const filters = [
+    'b.offer_id IS NOT NULL',
+    'COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1'
+  ];
+  const params = [];
+  appendDateFilters('b.operation_date', range, filters, params);
   const rows = db.prepare(`
     SELECT b.offer_id as product_id, MAX(b.offer_name) as product_name,
       pc.sku as sku,
@@ -627,12 +803,11 @@ function getProductBreakdown() {
     FROM billing_operations b
     LEFT JOIN product_cost pc ON pc.offer_id = b.offer_id
     LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
-    WHERE b.offer_id IS NOT NULL
-      AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+    WHERE ${filters.join(' AND ')}
     GROUP BY b.offer_id
     ORDER BY gross_cost DESC
     LIMIT 50
-  `).all();
+  `).all(...params);
   db.close();
   return rows.map(r => ({
     productId: r.product_id,
@@ -654,23 +829,32 @@ function getProductBreakdown() {
   }));
 }
 
-function getTrendsData(days = 30) {
+function getTrendsData(options = 30) {
   const db = openDb();
-  const safeDays = Math.min(3650, Math.max(1, Math.trunc(Number(days) || 30)));
+  const rangeOptions = typeof options === 'number' ? { days: options } : (options || {});
+  const range = resolveDateRange(db, rangeOptions);
+  const orderFilters = ["date(order_date) IS NOT NULL", "UPPER(IFNULL(seller_status, '')) <> 'CANCELLED'", "UPPER(IFNULL(payment_currency, '')) = 'PLN'"];
+  const orderParams = [];
+  appendDateFilters('order_date', range, orderFilters, orderParams);
+  const billingFilters = [
+    'date(b.operation_date) IS NOT NULL',
+    'COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1'
+  ];
+  const billingParams = [];
+  appendDateFilters('b.operation_date', range, billingFilters, billingParams);
   const rows = db.prepare(`
     WITH order_daily AS (
-      SELECT date(order_date) as d,
-        SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) = 'CANCELLED' THEN 0 ELSE IFNULL(payment_amount, 0) END) as revenue
+      SELECT date(order_date) AS d,
+        SUM(IFNULL(payment_amount, 0)) AS revenue
       FROM orders
-      WHERE date(order_date) IS NOT NULL
+      WHERE ${orderFilters.join(' AND ')}
       GROUP BY d
     ), billing_daily AS (
-      SELECT date(b.operation_date) as d,
-        SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END - CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) as costs
+      SELECT date(b.operation_date) AS d,
+        SUM(CASE WHEN b.debit < 0 THEN -b.debit ELSE 0 END - CASE WHEN b.credit > 0 THEN b.credit ELSE 0 END) AS costs
       FROM billing_operations b
       LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
-      WHERE date(b.operation_date) IS NOT NULL
-        AND COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1
+      WHERE ${billingFilters.join(' AND ')}
       GROUP BY d
     ), all_days AS (
       SELECT d FROM order_daily UNION SELECT d FROM billing_daily
@@ -681,9 +865,8 @@ function getTrendsData(days = 30) {
     FROM all_days
     LEFT JOIN order_daily ON order_daily.d = all_days.d
     LEFT JOIN billing_daily ON billing_daily.d = all_days.d
-    WHERE all_days.d >= date((SELECT MAX(d) FROM all_days), ?)
     ORDER BY all_days.d ASC
-  `).all(`-${safeDays} days`);
+  `).all(...orderParams, ...billingParams);
   db.close();
   return rows.map(r => ({
     date: r.d,
@@ -697,32 +880,95 @@ module.exports.getCostsBreakdown = getCostsBreakdown;
 module.exports.getProductBreakdown = getProductBreakdown;
 module.exports.getTrendsData = getTrendsData;
 
-function getSourceAnalysis() {
+function getSourceAnalysis(options = {}) {
   const db = openDb();
+  const range = resolveDateRange(db, options || {});
+  const orderFilters = [];
+  const orderParams = [];
+  appendDateFilters('order_date', range, orderFilters, orderParams);
+  const orderWhere = orderFilters.length ? `WHERE ${orderFilters.join(' AND ')}` : '';
   const orders = db.prepare(`
-    SELECT COUNT(*) as total,
-      MIN(date(order_date)) as date_from,
-      MAX(date(order_date)) as date_to,
-      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) = 'CANCELLED' THEN 1 ELSE 0 END) as cancelled,
-      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) <> 'CANCELLED' THEN 1 ELSE 0 END) as active,
-      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) = 'CANCELLED' THEN IFNULL(payment_amount, 0) ELSE 0 END) as cancelled_value,
-      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) <> 'CANCELLED' THEN IFNULL(payment_amount, 0) ELSE 0 END) as active_revenue
+    SELECT COUNT(*) AS total,
+      MIN(date(order_date)) AS date_from,
+      MAX(date(order_date)) AS date_to,
+      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) = 'CANCELLED' THEN 1 ELSE 0 END) AS cancelled,
+      SUM(CASE WHEN UPPER(IFNULL(seller_status, '')) <> 'CANCELLED' THEN 1 ELSE 0 END) AS active
+    FROM orders ${orderWhere}
+  `).get(...orderParams);
+  const revenueFilters = [...orderFilters, "UPPER(IFNULL(seller_status, '')) <> 'CANCELLED'"];
+  const activeRevenueRows = db.prepare(`
+    SELECT COALESCE(NULLIF(UPPER(TRIM(payment_currency)), ''), 'N/A') AS currency,
+      IFNULL(SUM(payment_amount), 0) AS revenue
     FROM orders
-  `).get();
-  const returns = db.prepare('SELECT COUNT(*) as line_items, SUM(CASE WHEN returns_quantity > 0 THEN 1 ELSE 0 END) as returned_line_items, SUM(IFNULL(returns_quantity, 0)) as returned_units FROM line_items').get();
+    WHERE ${revenueFilters.join(' AND ')}
+    GROUP BY currency
+  `).all(...orderParams);
+  const activeRevenueByCurrency = Object.fromEntries(activeRevenueRows.map((row) => [row.currency, round2(row.revenue)]));
+  const cancelledValueRows = db.prepare(`
+    SELECT COALESCE(NULLIF(UPPER(TRIM(payment_currency)), ''), 'N/A') AS currency,
+      IFNULL(SUM(payment_amount), 0) AS value
+    FROM orders
+    WHERE ${[...orderFilters, "UPPER(IFNULL(seller_status, '')) = 'CANCELLED'"].join(' AND ')}
+    GROUP BY currency
+  `).all(...orderParams);
+  const cancelledValueByCurrency = Object.fromEntries(cancelledValueRows.map((row) => [row.currency, round2(row.value)]));
+
+  const returnFilters = [];
+  const returnParams = [];
+  if (range.dateFrom) {
+    returnFilters.push('(i.date_range_to IS NULL OR date(i.date_range_to) >= date(?))');
+    returnParams.push(range.dateFrom);
+  }
+  if (range.dateTo) {
+    returnFilters.push('(i.date_range_from IS NULL OR date(i.date_range_from) <= date(?))');
+    returnParams.push(range.dateTo);
+  }
+  const returnWhere = returnFilters.length ? `WHERE ${returnFilters.join(' AND ')}` : '';
+  const returns = db.prepare(`
+    SELECT COUNT(*) AS line_items,
+      SUM(CASE WHEN li.returns_quantity > 0 THEN 1 ELSE 0 END) AS returned_line_items,
+      SUM(IFNULL(li.returns_quantity, 0)) AS returned_units
+    FROM line_items li
+    LEFT JOIN imports i ON i.id = li.import_id
+    ${returnWhere}
+  `).get(...returnParams);
+
+  const billingFilters = [];
+  const billingParams = [];
+  appendDateFilters('b.operation_date', range, billingFilters, billingParams);
+  const billingWhere = billingFilters.length ? `WHERE ${billingFilters.join(' AND ')}` : '';
   const billing = db.prepare(`
-    SELECT COUNT(*) as operations,
-      MIN(date(b.operation_date)) as date_from,
-      MAX(date(b.operation_date)) as date_to,
-      SUM(CASE WHEN COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1 AND b.debit < 0 THEN -b.debit ELSE 0 END) as gross_costs,
-      SUM(CASE WHEN COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1 AND b.credit > 0 THEN b.credit ELSE 0 END) as cost_credits,
-      SUM(CASE WHEN b.raw_details LIKE '%Identyfikator zamówienia:%' THEN 1 ELSE 0 END) as order_references,
-      SUM(CASE WHEN b.raw_details LIKE '%Identyfikator zamówienia:%' AND b.related_order_id IS NULL THEN 1 ELSE 0 END) as unmatched_order_references
+    SELECT COUNT(*) AS operations,
+      MIN(date(b.operation_date)) AS date_from,
+      MAX(date(b.operation_date)) AS date_to,
+      SUM(CASE WHEN COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1 AND b.debit < 0 THEN -b.debit ELSE 0 END) AS gross_costs,
+      SUM(CASE WHEN COALESCE(m.is_cost, CASE WHEN b.debit < 0 THEN 1 ELSE 0 END) = 1 AND b.credit > 0 THEN b.credit ELSE 0 END) AS cost_credits,
+      SUM(CASE WHEN b.raw_details LIKE '%Identyfikator zamówienia:%' THEN 1 ELSE 0 END) AS order_references,
+      SUM(CASE WHEN b.raw_details LIKE '%Identyfikator zamówienia:%' AND b.related_order_id IS NULL THEN 1 ELSE 0 END) AS unmatched_order_references
     FROM billing_operations b
     LEFT JOIN operation_category_map m ON m.operation_type = b.operation_type
-  `).get();
-  const latestBalance = db.prepare('SELECT balance FROM billing_operations WHERE balance IS NOT NULL ORDER BY operation_date DESC, id DESC LIMIT 1').get();
-  const linkedOrders = db.prepare('SELECT COUNT(DISTINCT related_order_id) as c FROM billing_operations WHERE related_order_id IS NOT NULL').get();
+    ${billingWhere}
+  `).get(...billingParams);
+  const balanceFilters = ['balance IS NOT NULL'];
+  const balanceParams = [];
+  if (range.dateTo) {
+    balanceFilters.push('date(operation_date) <= date(?)');
+    balanceParams.push(range.dateTo);
+  }
+  const latestBalance = db.prepare(`
+    SELECT balance FROM billing_operations
+    WHERE ${balanceFilters.join(' AND ')}
+    ORDER BY operation_date DESC, id DESC
+    LIMIT 1
+  `).get(...balanceParams);
+  const linkedFilters = ['related_order_id IS NOT NULL'];
+  const linkedParams = [];
+  appendDateFilters('operation_date', range, linkedFilters, linkedParams);
+  const linkedOrders = db.prepare(`
+    SELECT COUNT(DISTINCT related_order_id) AS c
+    FROM billing_operations
+    WHERE ${linkedFilters.join(' AND ')}
+  `).get(...linkedParams);
   db.close();
   return {
     orders: {
@@ -731,8 +977,10 @@ function getSourceAnalysis() {
       dateTo: orders.date_to,
       active: orders.active || 0,
       cancelled: orders.cancelled || 0,
-      cancelledValue: Math.round((orders.cancelled_value || 0) * 100) / 100,
-      activeRevenue: Math.round((orders.active_revenue || 0) * 100) / 100,
+      cancelledValue: cancelledValueByCurrency.PLN || 0,
+      cancelledValueByCurrency,
+      activeRevenue: activeRevenueByCurrency.PLN || 0,
+      activeRevenueByCurrency,
       lineItems: returns.line_items || 0,
       returnedLineItems: returns.returned_line_items || 0,
       returnedUnits: returns.returned_units || 0
@@ -748,7 +996,9 @@ function getSourceAnalysis() {
       netCosts: Math.round(((billing.gross_costs || 0) - (billing.cost_credits || 0)) * 100) / 100,
       balance: latestBalance ? latestBalance.balance : null,
       linkedOrders: linkedOrders.c || 0
-    }
+    },
+    dateFrom: range.dateFrom,
+    dateTo: range.dateTo
   };
 }
 
@@ -767,9 +1017,30 @@ function saveReport(name, dateFrom, dateTo, metricsSnapshot) {
   return res.lastInsertRowid;
 }
 
-function listReports(limit = 50) {
+function listReports(options = 50) {
+  const { limit = 50, dateFrom: rawDateFrom = null, dateTo: rawDateTo = null } =
+    typeof options === 'number' ? { limit: options } : (options || {});
+  const dateFrom = normalizeIsoDate(rawDateFrom, 'Start date');
+  const dateTo = normalizeIsoDate(rawDateTo, 'End date');
+  if (dateFrom && dateTo && dateFrom > dateTo) {
+    throw new Error('Start date must not be after end date.');
+  }
   const db = openDb();
-  const rows = db.prepare('SELECT id, name, date_from, date_to, created_at, is_pinned FROM saved_reports ORDER BY is_pinned DESC, created_at DESC LIMIT ?').all(limit);
+  let query = 'SELECT id, name, date_from, date_to, created_at, is_pinned FROM saved_reports';
+  const filters = [];
+  const params = [];
+  if (dateFrom) {
+    filters.push('date(date_to) >= date(?)');
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    filters.push('date(date_from) <= date(?)');
+    params.push(dateTo);
+  }
+  if (filters.length) query += ` WHERE ${filters.join(' AND ')}`;
+  query += ' ORDER BY is_pinned DESC, created_at DESC LIMIT ?';
+  params.push(limit);
+  const rows = db.prepare(query).all(...params);
   db.close();
   return rows;
 }

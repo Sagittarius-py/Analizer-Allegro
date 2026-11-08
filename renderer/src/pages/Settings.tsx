@@ -20,6 +20,9 @@ export default function SettingsPage() {
   const [backupPathError, setBackupPathError] = useState<string | null>(null)
   const [dbInfo, setDbInfo] = useState<any>(null)
   const [saving, setSaving] = useState(false)
+  const [restoringBackup, setRestoringBackup] = useState(false)
+  const [restoreBackupError, setRestoreBackupError] = useState<string | null>(null)
+  const [restoreBackupPath, setRestoreBackupPath] = useState<string | null>(null)
   const [showFactoryReset, setShowFactoryReset] = useState(false)
   const [resetAcknowledged, setResetAcknowledged] = useState(false)
   const [resetConfirmation, setResetConfirmation] = useState('')
@@ -52,7 +55,7 @@ export default function SettingsPage() {
     }
     try {
       const a = await (window as any).allegroSettings.get('auto_backup')
-      setAutoBackup(!!a)
+      setAutoBackup(a === true || a === 1 || a === 'true' || a === '1')
     } catch (e) {}
     try {
       const p = await (window as any).allegroSettings.get('backup_path')
@@ -199,6 +202,25 @@ export default function SettingsPage() {
     }
   }
 
+  async function restoreDb() {
+    if (!window.confirm('Przywrócenie zastąpi aktualne dane z kopii. Przed zmianą aplikacja automatycznie zapisze kopię obecnej bazy. Kontynuować?')) return
+    setRestoringBackup(true)
+    setRestoreBackupError(null)
+    setRestoreBackupPath(null)
+    try {
+      const result = await (window as any).allegroSettings.restoreDb()
+      if (result?.canceled) return
+      if (!result?.ok) throw new Error(result?.error || 'Nie udało się przywrócić kopii bazy.')
+      setRestoreBackupPath(result.backupPath)
+      await load()
+    } catch (err) {
+      console.error('Database restore failed', err)
+      setRestoreBackupError(err instanceof Error ? err.message : 'Nie udało się przywrócić kopii bazy.')
+    } finally {
+      setRestoringBackup(false)
+    }
+  }
+
   function cancelFactoryReset() {
     setShowFactoryReset(false)
     setResetAcknowledged(false)
@@ -325,9 +347,12 @@ export default function SettingsPage() {
               <div className="preview-stat col-span-full"><span>Lokalizacja</span><strong className="break-all">{dbInfo.path}</strong></div>
             </div>
           ) : <div className="text-sm text-gray-500 mt-2">Brak informacji o DB</div>}
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap gap-2">
             <button onClick={exportDb} className="px-4 py-2 bg-green-600 text-white rounded">Eksportuj kopię bazy</button>
+            <button type="button" onClick={restoreDb} disabled={restoringBackup} className="secondary-action px-4 py-2">{restoringBackup ? 'Sprawdzam i przywracam…' : 'Przywróć kopię bazy'}</button>
           </div>
+          {restoreBackupError ? <div role="alert" className="mt-2 text-sm text-red-500">{restoreBackupError}</div> : null}
+          {restoreBackupPath ? <div role="status" className="mt-2 break-all text-sm text-green-600">Baza została przywrócona. Zachowano kopię poprzednich danych: {restoreBackupPath}</div> : null}
         </div>
 
         <section className="factory-reset-zone" aria-labelledby="factory-reset-title">

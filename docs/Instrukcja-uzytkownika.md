@@ -64,7 +64,8 @@ Na tej podstawie aplikacja liczy przychody, koszty, saldo, marże i trendy — w
 Strona startowa z podsumowaniem:
 
 - **Karty metryk**: liczba zamówień, suma przychodów, bieżące saldo na koncie Allegro (z mini-wykresami trendu).
-- **Wykres przychodu i kosztów** z ostatnich 30 dni (najeżdżanie myszą pokazuje wartości dla konkretnego dnia).
+- **Wybór okresu**: 30, 90 lub 365 dni danych albo cały okres. Zakres dni liczy się wstecz od najnowszej daty znalezionej w zaimportowanych raportach, a nie od dzisiejszej daty.
+- **Wykres przychodu i kosztów** dla wybranego okresu (najeżdżanie myszą pokazuje wartości dla konkretnego dnia).
 - **Struktura zamówień** — wykres kołowy aktywne vs. anulowane.
 - **Największe kategorie kosztów** — pasek porównawczy (prowizje, dostawa, reklama itd.).
 - **Najnowsze importy** — historia ostatnio wczytanych plików z datami zakresu danych.
@@ -72,10 +73,13 @@ Strona startowa z podsumowaniem:
 
 Przycisk **„Odśwież dane”** ponownie pobiera wszystkie dane z bazy (przydatne po imporcie nowego pliku).
 
+Przychód i wykresy finansowe pokazują PLN. Kwoty w innych walutach są podane oddzielnie i nie są automatycznie przeliczane ani dodawane do PLN.
+
 ## Zamówienia
 
 - Tabela wszystkich zaimportowanych zamówień: ID, data, kwota po odjęciu powiązanych kosztów Allegro, status (przetłumaczony na polski, anulowane wyróżnione kolorem). Podstawowa kwota i suma rozpoznanych kosztów są widoczne pod wynikiem i po najechaniu na niego.
-- Wyszukiwarka po ID zamówienia, rynku (marketplace) lub dostawcy realizacji.
+- Kliknij nagłówek kolumny, aby posortować zamówienia; kolejne kliknięcie zmienia kierunek. Sortowanie uwzględnia wszystkie wyniki przed stronicowaniem.
+- Filtry daty początkowej i końcowej ograniczają zamówienia do wybranego zakresu (włącznie); działają razem z wyszukiwarką po ID zamówienia, rynku (marketplace) lub dostawcy realizacji.
 - Stronicowanie (50 zamówień na stronę, przyciski „Poprzednia”/„Następna”).
 - Kliknięcie **„Szczegóły”** pokazuje dane zamówienia oraz wszystkie powiązane operacje rozliczeniowe (prowizje, dostawa itd.) z tego raportu rozliczeń, które udało się dopasować po identyfikatorze zamówienia. Kwota przy każdej operacji to uznanie minus obciążenie: koszt jest ujemny, zwrot opłaty dodatni.
 - Jeśli operacje zawierają ID oferty, szczegóły pokazują oferty występujące w rozliczeniach tego zamówienia oraz przypisane do nich prowizje, dostawę i pozostałe opłaty. To powiązanie pochodzi z raportu rozliczeń; nie jest pełną listą pozycji sprzedaży i nie zawiera ilości ani ceny każdej pozycji. Opłaty dostawy bez ID oferty pozostają widoczne na poziomie zamówienia, ale nie są przypisywane do konkretnego produktu.
@@ -123,10 +127,13 @@ Warunki uzyskania oznaczenia Smart! w ofercie (konto zwykłe): jakość sprzeda�
 Katalog ofert (produktów) używany do liczenia marży:
 
 - Produkty pojawiają się tu **automatycznie** po imporcie raportu rozliczeń (na podstawie nazwy i ID oferty), ale bez kosztu zakupu — trzeba go uzupełnić ręcznie.
+- Koszt netto można uzupełnić lub zmienić bez otwierania szczegółów: wpisz kwotę bezpośrednio w polu **„Zakup netto”**. Zapis następuje po naciśnięciu Enter lub opuszczeniu pola; pozostałe dane i dotychczasowe potwierdzenie VAT są zachowane.
+- Przy pierwszym uzupełnieniu kosztu, jeśli cena sprzedaży nie jest ustawiona, aplikacja proponuje cenę netto i brutto według domyślnych stawek VAT oraz zapisanych progów zysku i marży. To propozycja oparta na domyślnych stawkach — nie potwierdza VAT; zweryfikuj ustawienia dla produktu przed użyciem wyliczeń.
 - Formularz pozwala ustawić dla każdej oferty: ID oferty, nazwę, SKU, koszt zakupu netto, cenę sprzedaży netto, stawkę VAT zakupu i sprzedaży, procent odliczenia VAT, walutę i notatki.
 - Ustawienia pozwalają określić domyślną walutę oraz domyślne stawki VAT zakupu/sprzedaży i procent odliczenia. Są one wstępnie wypełniane w nowych produktach i ofertach wykrytych w imporcie; same w sobie **nie potwierdzają** prawidłowości stawki ani prawa do odliczenia.
 - Po zaznaczeniu **„VAT zweryfikowany”** aplikacja przelicza automatycznie koszt zakupu brutto oraz szacowaną cenę sprzedaży brutto.
 - W katalogu widać liczbę zamówień, z którymi powiązano operacje danej oferty. Szczegóły produktu pokazują sumę opłat Allegro z zaimportowanych rozliczeń oraz zakres dat tych operacji; jest to suma historyczna, nie koszt jednostkowy.
+- Kliknij nagłówek tabeli, aby posortować produkty według nazwy, kosztu zakupu, szacowanego zysku lub ceny brutto.
 - Pokazywany zysk i marża są szacunkiem opartym na cenie sprzedaży i koszcie zakupu. Nie odejmują opłat Allegro ani Ads, dlatego zielony/czerwony status nie jest potwierdzeniem faktycznego zysku netto. Nowo wykryte oferty wymagają uzupełnienia kosztu zakupu i danych sprzedażowych.
 - Wyszukiwarka filtruje po nazwie, ID oferty lub SKU.
 - Możliwość edycji i usunięcia produktu z katalogu (usunięcie nie usuwa historycznych operacji rozliczeniowych, tylko wpis kosztowy).
@@ -135,18 +142,26 @@ Katalog ofert (produktów) używany do liczenia marży:
 
 Szczegółowa analiza finansowa łącząca oba raporty:
 
-- Podsumowanie: liczba zamówień (aktywne/anulowane), przychód zamówień aktywnych, koszty netto z rozliczeń, bieżące saldo Allegro — każde z zakresem dat danego raportu źródłowego.
+- Podsumowanie: liczba zamówień (aktywne/anulowane), przychód zamówień aktywnych w PLN, koszty netto z rozliczeń, saldo na koniec wybranego zakresu.
 - Informacja o dopasowaniu operacji rozliczeniowych do zamówień (ile powiązano, ile bez dopasowania) — pomaga ocenić kompletność danych przed wyciąganiem wniosków o zysku.
 - **Koszty według kategorii** — lista z sumą i liczbą operacji dla każdej kategorii (prowizja, dostawa, reklama, abonament, inne).
 - **Opłaty Allegro według oferty** — 10 ofert z największymi kosztami wraz z informacją, czy w katalogu produktów uzupełniono koszt zakupu i stawki VAT.
 - **Trend przychodu i kosztów** — konfigurowalny zakres dni (1–3650), wykresy oraz tabela dzienna (przychód / koszty netto / różnica).
+- Nagłówki tabel trendu oraz tabeli ofert w szczegółach zamówienia sortują dane po klikniętej kolumnie; kolejne kliknięcie zmienia kierunek.
+- Filtry daty początkowej i końcowej ograniczają podsumowanie, koszty, produkty oraz trendy do wybranego okresu; ten zakres ma pierwszeństwo przed liczbą dni wykresu. Wyczyść zakres dat, aby wrócić do ustawienia liczby dni.
+
+Zakres dni na tej stronie również liczony jest od najnowszej daty w zaimportowanych raportach. Przychody w walutach innych niż PLN są widoczne osobno; nie wchodzą do porównania z kosztami rozliczeń w PLN. Zwroty są przypisywane do okresu na podstawie zakresu dat raportu zamówień, ponieważ plik nie udostępnia daty dla każdej pozycji zwrotu.
 
 ## Raporty
 
-Zapisywanie i przeglądanie „migawek” bieżących metryk dla wybranego okresu:
+Zapisywanie i przeglądanie migawek analizy dla wybranego okresu:
 
-- Formularz: nazwa raportu, data od, data do → **„Zapisz raport”** zapisuje aktualne podsumowanie metryk (z Pulpitu) jako migawkę JSON powiązaną z tym zakresem dat.
-- Lista zapisanych raportów z możliwością: podglądu (surowe dane metryk), przypinania (oznaczenie 📌 dla ważnych raportów) i usuwania.
+- Formularz: nazwa raportu, data od, data do → **„Zapisz raport”** oblicza i zapisuje metryki, koszty wg kategorii, trend oraz podsumowanie źródeł wyłącznie dla podanego zakresu.
+- Podgląd pokazuje zamówienia, przychód PLN, koszty Allegro i orientacyjną różnicę. Różnica nie jest zyskiem netto: nie odejmuje kosztu zakupu produktów, podatku ani kosztów spoza raportów.
+- Przychody w innych walutach są pokazane oddzielnie i nie są przeliczane na PLN.
+- **Eksport CSV** zapisuje wybrany raport wraz z metrykami, przychodami wg waluty, kosztami kategorii i dziennym trendem.
+- Filtry daty początkowej i końcowej na liście pokazują zapisane raporty, których okres pokrywa się z wybranym zakresem.
+- Lista zapisanych raportów pozwala na podgląd, eksport, przypinanie (oznaczenie 📌 dla ważnych raportów) i usuwanie. Starsze migawki z poprzednich wersji aplikacji nadal można otworzyć, ale zawierają tylko wcześniejsze podstawowe metryki.
 
 ## Ustawienia
 
@@ -155,6 +170,7 @@ Zapisywanie i przeglądanie „migawek” bieżących metryk dla wybranego okres
 - **Domyślny folder kopii** — ścieżka na dysku (przycisk „Wybierz” otwiera okno wyboru folderu); aplikacja waliduje, czy folder istnieje i oferuje jego utworzenie.
 - **Informacje o bazie danych** — liczba zamówień, liczba operacji rozliczeniowych, rozmiar pliku bazy i jego pełna ścieżka.
 - **„Eksportuj kopię bazy”** — ręczny zapis kopii pliku `.db` w wybranym miejscu.
+- **„Przywróć kopię bazy”** — wybierz wcześniejszy plik `.db`/`.sqlite`. Aplikacja sprawdzi jego integralność i zgodność, a przed zastąpieniem obecnych danych automatycznie zapisze ich kopię. Jeśli kontrola kopii się nie powiedzie, obecna baza pozostanie bez zmian.
 - **Przywracanie stanu fabrycznego** — nieodwracalnie usuwa wszystkie zaimportowane dane (zamówienia, rozliczenia, katalog produktów, zapisane raporty, ustawienia). Wymaga zaznaczenia świadomej zgody oraz wpisania dokładnie frazy `USUŃ WSZYSTKIE DANE`. Przed usunięciem aplikacja **automatycznie tworzy kopię zapasową** bazy — jeśli kopia się nie powiedzie, reset nie zostanie wykonany.
 
 ## Gdzie są przechowywane dane

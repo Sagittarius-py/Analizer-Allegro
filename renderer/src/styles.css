@@ -267,6 +267,13 @@ svg path {
 	background: var(--canvas) !important;
 }
 
+.app-shell:has(.app-content-products) {
+	height: 100vh;
+	height: 100dvh;
+	min-height: 0;
+	overflow: hidden;
+}
+
 .app-main {
 	min-width: 0;
 	min-height: 100vh;
@@ -274,7 +281,9 @@ svg path {
 
 .app-main:has(.app-content-products) {
 	height: 100vh;
+	height: 100dvh;
 	min-height: 0;
+	overflow: hidden;
 }
 
 .app-header {
@@ -340,6 +349,7 @@ svg path {
 	flex: 1 1 0%;
 	flex-direction: column;
 	min-height: 0;
+	box-sizing: border-box;
 	overflow: hidden;
 }
 
@@ -350,6 +360,21 @@ svg path {
 	width: 100%;
 	min-height: 0;
 	overflow: hidden;
+}
+
+.products-page {
+	flex: 1 1 0%;
+	min-height: 0;
+	overflow: hidden;
+}
+
+.product-catalog {
+	flex: 1 1 0%;
+	min-height: 0;
+}
+
+.product-catalog > .table-scroll {
+	overscroll-behavior: contain;
 }
 
 .product-editor {
@@ -824,23 +849,16 @@ svg path {
 
 @media (max-width: 999px) {
 	.app-main:has(.app-content-products) {
-		height: auto;
-		min-height: 100vh;
+		height: 100vh;
+		height: 100dvh;
+		min-height: 0;
 	}
 
 	.app-content-products,
 	.app-content-products > div {
-		flex: initial;
-		overflow: visible;
-	}
-
-	.products-page {
-		flex: initial;
-	}
-
-	.product-catalog {
-		min-height: 320px;
-		flex: initial;
+		flex: 1 1 0%;
+		min-height: 0;
+		overflow: hidden;
 	}
 }
 

@@ -67,6 +67,14 @@ Kluczowe zasady:
 - **Powiązanie operacji z zamówieniami**: `related_order_id` jest wyciągany regexem ze „Szczegółów operacji” w trakcie parsowania, a `linkBillingOperationsToOrders` domyka pozostałe powiązania po imporcie zamówień w innej kolejności.
 - **DB tylko gdy potrzebna**: w trybie dev baza jest inicjalizowana tylko przy `ELECTRON_ENABLE_DB=1` lub gdy aplikacja jest spakowana (`app.isPackaged`); w przeciwnym razie [electron/ipc/index.js](electron/ipc/index.js) używa `repoStub` zwracającego puste/neutralne wartości, żeby UI działał bez bazy.
 
+### Zasady analizy okresów i walut
+
+- Sumy przychodów, trendy i różnice finansowe obejmują wyłącznie zamówienia w PLN; przychody w innych walutach są zwracane osobno jako `revenueByCurrency`. Aplikacja nie stosuje kursów walut ani nie sumuje różnych walut.
+- Wybór 30/90/365 dni oznacza dni kalendarzowe liczone wstecz od najnowszej daty znalezionej w zaimportowanych zamówieniach lub rozliczeniach. „Cały okres” pomija filtr dat.
+- Filtr okresu jest stosowany spójnie do podsumowania, trendu, źródłowej analizy, kategorii kosztów i opłat przypisanych do ofert. Saldo pokazuje ostatnią znaną wartość nie późniejszą niż koniec okresu.
+- Zapisany raport przechowuje migawkę obliczoną dla wskazanych dat, a nie całej bazy. Różnica przychodu PLN i kosztów Allegro jest orientacyjna i nie obejmuje kosztu zakupu, podatków ani kosztów spoza raportów.
+- Zapisane migawki można wyeksportować do CSV. Przywracanie bazy sprawdza integralność i tabele SQLite, tworzy kopię aktualnej bazy przed zamianą oraz ponownie stosuje migracje schematu aplikacji.
+
 ### Schemat bazy danych (SQLite)
 
 | Tabela | Rola |
@@ -84,7 +92,7 @@ Migracje kolumn dla `product_cost` są dopisywane idempotentnie w `initDatabase`
 
 ### Kanały IPC (pełna lista w [electron/ipc/index.js](electron/ipc/index.js))
 
-`database:getInfo`, `imports:list`, `metrics:getSummary`, `settings:*` (get/set/list/delete/factoryReset/exportDb/validatePath/selectFolder/createFolder), `orders:list`, `orders:get`, `import:parseAndPreview`, `import:commit`, `import:selectFiles`, `costs:breakdown`, `products:breakdown`, `products:list`, `products:save`, `products:delete`, `trends:data`, `analytics:sourceSummary`, `reports:save`, `reports:list`, `reports:get`, `reports:delete`, `reports:pin`.
+`database:getInfo`, `imports:list`, `metrics:getSummary`, `settings:*` (get/set/list/delete/factoryReset/exportDb/restoreDb/validatePath/selectFolder/createFolder), `orders:list`, `orders:get`, `import:parseAndPreview`, `import:commit`, `import:selectFiles`, `costs:breakdown`, `products:breakdown`, `products:list`, `products:save`, `products:delete`, `trends:data`, `analytics:sourceSummary`, `reports:save`, `reports:list`, `reports:get`, `reports:exportCsv`, `reports:delete`, `reports:pin`.
 
 ## Uruchamianie w trybie deweloperskim
 
